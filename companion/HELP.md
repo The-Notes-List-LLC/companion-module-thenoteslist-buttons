@@ -16,6 +16,8 @@ A station belongs to one production. To move to another show, revoke it in Setti
 - **Create note** — module (Cue / Work / Production / Electrician), text, priority, type.
 - **Set status of last created note** — Complete, Cancelled, In Review (Work Notes only), or back to To Do. Applies to the last note *this station* created.
 
+- **Open the new-note editor in my open tab** — pops the Add Note dialog in your browser tab that is on that module's page (Cue Notes lands you in the cue number field). Only your own tabs react; nothing happens if none is open.
+
 ## Feedbacks
 
 - **Outstanding count above threshold** — colour a button when a module has more than N open notes.

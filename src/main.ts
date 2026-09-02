@@ -224,6 +224,20 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           }
         },
       },
+      open_note_editor: {
+        name: 'Open the new-note editor in my open tab',
+        description: 'Opens the Add Note dialog in your browser tab that is on this module page (cue number field focused on Cue Notes). Needs that tab open.',
+        options: [
+          { type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) },
+        ],
+        callback: async (event) => {
+          try {
+            await this.api.openNoteEditor(String(event.options.module))
+          } catch (e) {
+            this.log('warn', `Open editor failed: ${describe(e)}`)
+          }
+        },
+      },
       set_last_status: {
         name: 'Set status of last created note',
         options: [{ type: 'dropdown', id: 'status', label: 'Status', default: 'complete', choices: STATUSES }],
