@@ -8,6 +8,7 @@ import {
   type CompanionVariableDefinition,
   type SomeCompanionConfigField,
 } from '@companion-module/base'
+import { randomUUID } from 'node:crypto'
 import { StationApi, type ApiError } from './api.js'
 import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig } from './config.js'
 
@@ -197,7 +198,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           // One id per PRESS: a retry after a dropped response replays the same note
           // instead of creating a twin (server answers 200 replayed:true).
           const body = {
-            id: crypto.randomUUID(),
+            id: randomUUID(),
             module: String(event.options.module),
             description,
             priority: String(event.options.priority),
