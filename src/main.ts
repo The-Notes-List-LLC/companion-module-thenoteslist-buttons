@@ -78,8 +78,9 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       }
       const start = await this.api.pairStart()
       this.pairing = { code: start.code, pollSecret: start.pollSecret, expiresAt: Date.parse(start.expiresAt) }
-      this.updateStatus(InstanceStatus.Connecting, `Pair code: ${start.code} — enter it in Settings → Button stations`)
-      this.log('info', `Pairing code ${start.code}. Type it into The Notes List → this show → Settings → Button stations.`)
+      this.updateStatus(InstanceStatus.Connecting, `PAIR CODE ${start.code} — enter it in the show's Settings → Button stations`)
+      this.setVariableValues({ pairing_code: start.code })
+      this.log('warn', `PAIRING CODE: ${start.code}  →  The Notes List → the show → Settings → Button stations. Expires in 10 minutes. (Also in variable $(thenoteslist:pairing_code).)`)
       this.timers.push(setInterval(() => void this.pollPairing(), PAIR_POLL_MS))
     } catch (e) {
       this.updateStatus(InstanceStatus.ConnectionFailure, describe(e))
@@ -99,6 +100,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       if (res.token) {
         this.pairing = null
         this.clearTimers()
+        this.setVariableValues({ pairing_code: '' })
         // Persist the token; the config form shows it as a secret and never in full.
         this.saveConfig({
           ...this.config,
@@ -242,6 +244,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       { variableId: 'production_name', name: 'Production name' },
       { variableId: 'last_note_status', name: 'Status of the last note this station created' },
       { variableId: 'connected', name: 'Connected (true/false)' },
+      { variableId: 'pairing_code', name: 'Pairing code while pairing is in progress (put it on a button)' },
     ]
 
     this.setActionDefinitions(actions)
