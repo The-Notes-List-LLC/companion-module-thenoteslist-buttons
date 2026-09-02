@@ -3,7 +3,7 @@ import type { SomeCompanionConfigField } from '@companion-module/base'
 export interface ModuleConfig {
   baseUrl: string
   startPairing: boolean
-  /** Filled by pairing. Never shown in full. */
+  /** Filled by pairing and kept in the stored config; deliberately NOT a visible field. */
   token: string
   stationName: string
   productionName: string
@@ -41,7 +41,6 @@ export function getConfigFields(view: PairingView = { code: null, expiresAt: nul
     },
     { type: 'textinput', id: 'baseUrl', label: 'Base URL', width: 8, default: DEFAULT_BASE_URL },
     { type: 'checkbox', id: 'startPairing', label: 'Start pairing', width: 4, default: false },
-    { type: 'textinput', id: 'pairingCode', label: 'Pairing code (filled in by the module — type this into the app)', width: 12, default: '' },
-    { type: 'secret-text', id: 'token', label: 'Station token (set by pairing)', width: 12, default: '' },
+    { type: 'textinput', id: 'pairingCode', label: 'Pairing code (appears here while pairing; type it into the app, then it clears itself)', width: 12, default: '' },
   ]
 }
