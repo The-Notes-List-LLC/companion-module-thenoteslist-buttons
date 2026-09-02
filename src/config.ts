@@ -7,6 +7,8 @@ export interface ModuleConfig {
   token: string
   stationName: string
   productionName: string
+  /** Written by the module while pairing; shown live in the settings window. */
+  pairingCode: string
 }
 
 export const DEFAULT_BASE_URL = 'https://thenoteslist.com'
@@ -39,6 +41,7 @@ export function getConfigFields(view: PairingView = { code: null, expiresAt: nul
     },
     { type: 'textinput', id: 'baseUrl', label: 'Base URL', width: 8, default: DEFAULT_BASE_URL },
     { type: 'checkbox', id: 'startPairing', label: 'Start pairing', width: 4, default: false },
+    { type: 'textinput', id: 'pairingCode', label: 'Pairing code (filled in by the module — type this into the app)', width: 12, default: '' },
     { type: 'secret-text', id: 'token', label: 'Station token (set by pairing)', width: 12, default: '' },
   ]
 }

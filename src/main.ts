@@ -93,6 +93,10 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       this.pairing = { code: start.code, pollSecret: start.pollSecret, expiresAt: Date.parse(start.expiresAt) }
       this.updateStatus(InstanceStatus.Connecting, `PAIR CODE ${start.code} — enter it in the show's Settings → Button stations`)
       this.setVariableValues({ pairing_code: start.code })
+      // Push the code into the stored config so an OPEN settings window shows it.
+      // configUpdated keeps the in-flight pairing (see the guard there).
+      this.config = { ...this.config, pairingCode: start.code }
+      this.saveConfig(this.config)
       this.log('warn', `PAIRING CODE: ${start.code}  →  The Notes List → the show → Settings → Button stations. Expires in 10 minutes. (Also in variable $(thenoteslist:pairing_code).)`)
       this.timers.push(setInterval(() => void this.pollPairing(), PAIR_POLL_MS))
     } catch (e) {
@@ -123,6 +127,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         this.saveConfig({
           ...this.config,
           startPairing: false,
+          pairingCode: '',
           token: res.token,
           stationName: res.station?.name ?? '',
           productionName: res.station?.productionName ?? '',
