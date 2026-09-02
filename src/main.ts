@@ -70,6 +70,12 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   // ---------------------------------------------------------------- pairing
   private async beginPairing(): Promise<void> {
     try {
+      // A saved token means a previous station: revoke it so it does not linger
+      // as an "Active" station nobody holds. Best effort.
+      if (this.config.token) {
+        await this.api.revokeSelf().catch(() => undefined)
+        this.api.setToken(null)
+      }
       const start = await this.api.pairStart()
       this.pairing = { code: start.code, pollSecret: start.pollSecret, expiresAt: Date.parse(start.expiresAt) }
       this.updateStatus(InstanceStatus.Connecting, `Pair code: ${start.code} — enter it in Settings → Button stations`)
@@ -163,17 +169,32 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         ],
         callback: async (event, context) => {
           const description = await context.parseVariablesInString(String(event.options.description ?? ''))
-          try {
-            const res = await this.api.createNote({
-              module: String(event.options.module),
-              description,
-              priority: String(event.options.priority),
-              type: String(event.options.type ?? '') || undefined,
-            })
-            this.setVariableValues({ last_note_status: res.note.status })
-            void this.refreshCounts()
-          } catch (e) {
-            this.log('warn', `Create note failed: ${describe(e)}`)
+          // One id per PRESS: a retry after a dropped response replays the same note
+          // instead of creating a twin (server answers 200 replayed:true).
+          const body = {
+            id: crypto.randomUUID(),
+            module: String(event.options.module),
+            description,
+            priority: String(event.options.priority),
+            type: String(event.options.type ?? '') || undefined,
+          }
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const res = await this.api.createNote(body)
+              this.setVariableValues({ last_note_status: res.note.status })
+              for (const [k, v] of Object.entries(res.coerced ?? {})) {
+                this.log('warn', `Create note: ${k} "${String((body as Record<string, unknown>)[k])}" is not available on this production; wrote ${v ?? 'none'}. Fix the button.`)
+              }
+              void this.refreshCounts()
+              return
+            } catch (e) {
+              const err = e as ApiError
+              // Only a transport failure (no HTTP status) is worth one retry with the same id.
+              if (err.status !== undefined || attempt === 1) {
+                this.log('warn', `Create note failed: ${describe(e)}`)
+                return
+              }
+            }
           }
         },
       },

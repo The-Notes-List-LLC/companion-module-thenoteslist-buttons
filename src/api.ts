@@ -34,9 +34,11 @@ export class StationApi {
   counts() {
     return this.call<Record<'cue' | 'work' | 'production' | 'electrician', { todo: number; review: number; outstanding: number }> & { asOf: string }>('/api/stations/counts')
   }
-  createNote(body: { module: string; description: string; priority?: string; type?: string }) {
-    return this.call<{ note: { id: string; status: string } }>('/api/stations/notes', { method: 'POST', body: JSON.stringify(body) })
+  createNote(body: { module: string; description: string; priority?: string; type?: string; id: string }) {
+    return this.call<{ note: { id: string; status: string; priority: string; type: string | null }; coerced: Record<string, string | null>; replayed: boolean }>(
+      '/api/stations/notes', { method: 'POST', body: JSON.stringify(body) })
   }
+  revokeSelf() { return this.call<{ revoked: boolean }>('/api/stations/me', { method: 'DELETE' }) }
   setLastStatus(status: string) {
     return this.call<{ note: { id: string; status: string } }>('/api/stations/notes/last/status', { method: 'POST', body: JSON.stringify({ status }) })
   }
