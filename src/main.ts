@@ -58,6 +58,13 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.defineEntities()
 
     if (this.config.startPairing || !this.config.token) {
+      // A pairing already in flight (code not yet expired) survives a config
+      // re-save: keep polling it instead of minting a new code.
+      if (this.pairing && Date.now() < this.pairing.expiresAt) {
+        this.updateStatus(InstanceStatus.Connecting, `PAIR CODE ${this.pairing.code} — enter it in the show's Settings → Button stations`)
+        this.timers.push(setInterval(() => void this.pollPairing(), PAIR_POLL_MS))
+        return
+      }
       await this.beginPairing()
       return
     }
@@ -83,7 +90,12 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       this.log('warn', `PAIRING CODE: ${start.code}  →  The Notes List → the show → Settings → Button stations. Expires in 10 minutes. (Also in variable $(thenoteslist:pairing_code).)`)
       this.timers.push(setInterval(() => void this.pollPairing(), PAIR_POLL_MS))
     } catch (e) {
-      this.updateStatus(InstanceStatus.ConnectionFailure, describe(e))
+      const err = e as ApiError
+      const msg = err.status === 429
+        ? 'Too many pairings started from this network. Wait a few minutes, then untick and re-tick "Start pairing".'
+        : describe(e)
+      this.updateStatus(InstanceStatus.ConnectionFailure, msg)
+      this.log('error', `Pairing could not start: ${msg}`)
     }
   }
 
