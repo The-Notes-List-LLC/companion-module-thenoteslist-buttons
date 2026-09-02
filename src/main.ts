@@ -48,7 +48,13 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   }
 
   getConfigFields(): SomeCompanionConfigField[] {
-    return getConfigFields()
+    return getConfigFields({
+      code: this.pairing && Date.now() < this.pairing.expiresAt ? this.pairing.code : null,
+      expiresAt: this.pairing?.expiresAt ?? null,
+      stationName: this.config?.stationName ?? '',
+      productionName: this.config?.productionName ?? '',
+      connected: this.connected,
+    })
   }
 
   async configUpdated(config: ModuleConfig): Promise<void> {
