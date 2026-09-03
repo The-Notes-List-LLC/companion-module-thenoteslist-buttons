@@ -3,7 +3,7 @@
 Bitfocus Companion module for [The Notes List](https://thenoteslist.com). Spec: The-Notes-List-LLC/thenoteslist#910.
 
 - Pair from the connection config (a 6-character code you type into the show's Settings).
-- Actions: create note, set status of the last note this station created.
+- Actions (all on your own open tab): new note via the editor with type/priority/cue prefilled, highlight next/previous, set status of the highlighted note, undo/redo, go to module.
 - Feedbacks: outstanding count above threshold, connected.
 - Variables: per-module outstanding counts, station and production name.
 

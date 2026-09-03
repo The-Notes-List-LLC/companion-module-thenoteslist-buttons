@@ -17,12 +17,13 @@ Add your console's own Companion connection (for ETC Eos: the **ETC Eos** module
 
 ## Actions
 
-- **Create note** — module (Cue / Work / Production / Electrician), text, priority and type as dropdowns filled with THIS show's real choices (renamed or custom types included), cue number.
-- **Set status of last created note** — Complete, Cancelled, In Review (Work Notes only), or back to To Do. Applies to the last note *this station* created.
+Everything acts on **your own open browser tab** of The Notes List, on the page for the chosen module. Other members' tabs never react.
 
-- **Open the new-note editor in my open tab** — pops the Add Note dialog in your browser tab that is on that module's page (Cue Notes lands you in the cue number field). Only your own tabs react; nothing happens if none is open.
-
-- **Tab: highlight next / previous note**, **Tab: set status of the highlighted note**, **Tab: undo / redo**, **Tab: jump to module** — all act on YOUR open browser tab (clicking a row in the app also highlights it).
+- **New note (opens the editor in your tab)** — module, type and priority (this show's real choices), cue number (defaults to the console's live cue). Opens the Add Note dialog prefilled; you finish the text at the keyboard.
+- **Highlight next / previous note** — moves the blue ring through the visible list. Clicking a row in the app also highlights it.
+- **Set status of highlighted note** — Complete, Cancelled, In Review (Work Notes only) or back to To Do.
+- **Undo / Redo**.
+- **Go to module** — navigates your tab to another module of the same show.
 
 ## Feedbacks
 
@@ -31,4 +32,4 @@ Add your console's own Companion connection (for ETC Eos: the **ETC Eos** module
 
 ## Variables
 
-`$(thenoteslist:cue_outstanding)`, `work_outstanding`, `production_outstanding`, `electrician_outstanding`, `station_name`, `production_name`, `last_note_status`, `connected`.
+`$(thenoteslist:cue_outstanding)`, `work_outstanding`, `production_outstanding`, `electrician_outstanding`, `station_name`, `production_name`, `pairing_code`, `connected`.

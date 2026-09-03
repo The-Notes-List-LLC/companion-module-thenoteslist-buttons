@@ -209,80 +209,40 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       tooltip: `Resolved when you press. Default is the console's live cue via the ${label} connection; use $(${label}:cue_pending_num) for the next cue, or type a number.`,
     }
     const actions: CompanionActionDefinitions = {
-      create_note: {
-        name: 'Create note',
-        options: [
-          { type: 'dropdown', id: 'module', label: 'Module', default: 'work', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) },
-          { type: 'textinput', id: 'description', label: 'Text', default: '', useVariables: true },
-          ...perModuleChoices('priority', 'Priority', (m) => this.options?.[m]?.priorities ?? FALLBACK_PRIORITIES, 'medium'),
-          ...perModuleChoices('type', 'Type', (m) => this.options?.[m]?.types ?? [], ''),
-          cueOption,
-        ],
-        callback: async (event, context) => {
-          const description = await context.parseVariablesInString(String(event.options.description ?? ''))
-          const cueNumber = (await context.parseVariablesInString(String(event.options.cueNumber ?? ''))).trim() || undefined
-          // One id per PRESS: a retry after a dropped response replays the same note
-          // instead of creating a twin (server answers 200 replayed:true).
-          const mod = String(event.options.module) as ModuleId
-          const body = {
-            id: randomUUID(),
-            module: mod,
-            description,
-            cueNumber,
-            // Keys saved before the dropdowns existed carry the old free-text
-            // `priority`/`type`; the server matches labels too, so honour them.
-            priority: String(event.options[`priority_${mod}`] ?? event.options.priority ?? 'medium'),
-            type: String(event.options[`type_${mod}`] ?? event.options.type ?? '') || undefined,
-          }
-          for (let attempt = 0; attempt < 2; attempt++) {
-            try {
-              const res = await this.api.createNote(body)
-              this.setVariableValues({ last_note_status: res.note.status })
-              for (const [k, v] of Object.entries(res.coerced ?? {})) {
-                this.log('warn', `Create note: ${k} "${String((body as Record<string, unknown>)[k])}" is not available on this production; wrote ${v ?? 'none'}. Fix the button.`)
-              }
-              void this.refreshCounts()
-              return
-            } catch (e) {
-              const err = e as ApiError
-              // Only a transport failure (no HTTP status) is worth one retry with the same id.
-              if (err.status !== undefined || attempt === 1) {
-                this.log('warn', `Create note failed: ${describe(e)}`)
-                return
-              }
-            }
-          }
-        },
-      },
       open_note_editor: {
-        name: 'Open the new-note editor in my open tab',
-        description: 'Opens the Add Note dialog in your browser tab that is on this module page (cue number field focused on Cue Notes). Needs that tab open.',
+        name: 'New note (opens the editor in your tab)',
+        description: 'Opens the Add Note dialog in your browser tab on this module page, prefilled with the type, priority and cue number below. Your tab must be open on that page.',
         options: [
           { type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) },
+          ...perModuleChoices('type', 'Type', (m) => this.options?.[m]?.types ?? [], ''),
+          ...perModuleChoices('priority', 'Priority', (m) => this.options?.[m]?.priorities ?? FALLBACK_PRIORITIES, 'medium'),
           cueOption,
         ],
         callback: async (event, context) => {
-          try {
-            const cueNumber = (await context.parseVariablesInString(String(event.options.cueNumber ?? ''))).trim() || undefined
-            await this.api.openNoteEditor(String(event.options.module), cueNumber)
-          } catch (e) {
-            this.log('warn', `Open editor failed: ${describe(e)}`)
-          }
+          const mod = String(event.options.module) as ModuleId
+          const cueNumber = (await context.parseVariablesInString(String(event.options.cueNumber ?? ''))).trim() || undefined
+          await this.ui({
+            command: 'open_note_editor',
+            module: mod,
+            cueNumber,
+            type: String(event.options[`type_${mod}`] ?? '') || undefined,
+            priority: String(event.options[`priority_${mod}`] ?? '') || undefined,
+          })
         },
       },
       tab_next_note: {
-        name: 'Tab: highlight next note',
+        name: 'Highlight next note',
         description: 'Moves the highlight down one row in your open tab on this module page.',
         options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
         callback: async (event) => this.ui({ command: 'next_note', module: String(event.options.module) }),
       },
       tab_prev_note: {
-        name: 'Tab: highlight previous note',
+        name: 'Highlight previous note',
         options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
         callback: async (event) => this.ui({ command: 'prev_note', module: String(event.options.module) }),
       },
       tab_set_highlighted_status: {
-        name: 'Tab: set status of the highlighted note',
+        name: 'Set status of highlighted note',
         options: [
           { type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) },
           { type: 'dropdown', id: 'status', label: 'Status', default: 'complete', choices: STATUSES },
@@ -290,17 +250,52 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         callback: async (event) => this.ui({ command: 'set_highlighted_status', module: String(event.options.module), status: String(event.options.status) }),
       },
       tab_undo: {
-        name: 'Tab: undo',
+        name: 'Undo',
         options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
         callback: async (event) => this.ui({ command: 'undo', module: String(event.options.module) }),
       },
       tab_redo: {
-        name: 'Tab: redo',
+        name: 'Redo',
         options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
         callback: async (event) => this.ui({ command: 'redo', module: String(event.options.module) }),
       },
       tab_jump_module: {
-        name: 'Tab: jump to module',
+        name: 'Go to module',
+        description: 'Navigates your open tab on this production to the chosen module.',
+        options: [{ type: 'dropdown', id: 'module', label: 'Go to', default: 'work', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
+        callback: async (event) => this.ui({ command: 'jump_module', module: String(event.options.module) }),
+      },
+      tab_next_note: {
+        name: 'Highlight next note',
+        description: 'Moves the highlight down one row in your open tab on this module page.',
+        options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
+        callback: async (event) => this.ui({ command: 'next_note', module: String(event.options.module) }),
+      },
+      tab_prev_note: {
+        name: 'Highlight previous note',
+        options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
+        callback: async (event) => this.ui({ command: 'prev_note', module: String(event.options.module) }),
+      },
+      tab_set_highlighted_status: {
+        name: 'Set status of highlighted note',
+        options: [
+          { type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) },
+          { type: 'dropdown', id: 'status', label: 'Status', default: 'complete', choices: STATUSES },
+        ],
+        callback: async (event) => this.ui({ command: 'set_highlighted_status', module: String(event.options.module), status: String(event.options.status) }),
+      },
+      tab_undo: {
+        name: 'Undo',
+        options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
+        callback: async (event) => this.ui({ command: 'undo', module: String(event.options.module) }),
+      },
+      tab_redo: {
+        name: 'Redo',
+        options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
+        callback: async (event) => this.ui({ command: 'redo', module: String(event.options.module) }),
+      },
+      tab_jump_module: {
+        name: 'Go to module',
         description: 'Navigates your open tab on this production to the chosen module.',
         options: [{ type: 'dropdown', id: 'module', label: 'Go to', default: 'work', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
         callback: async (event) => this.ui({ command: 'jump_module', module: String(event.options.module) }),
@@ -347,7 +342,6 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       { variableId: 'electrician_outstanding', name: 'Electrician Notes outstanding' },
       { variableId: 'station_name', name: 'Station name' },
       { variableId: 'production_name', name: 'Production name' },
-      { variableId: 'last_note_status', name: 'Status of the last note this station created' },
       { variableId: 'connected', name: 'Connected (true/false)' },
       { variableId: 'pairing_code', name: 'Pairing code while pairing is in progress (put it on a button)' },
     ]
@@ -357,7 +351,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.setVariableDefinitions(variables)
   }
 
-  private async ui(body: { command: string; module: string; status?: string }): Promise<void> {
+  private async ui(body: { command: string; module: string; status?: string; cueNumber?: string; type?: string; priority?: string }): Promise<void> {
     try {
       await this.api.ui(body)
     } catch (e) {

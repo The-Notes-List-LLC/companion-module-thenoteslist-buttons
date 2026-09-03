@@ -44,7 +44,7 @@ export class StationApi {
       '/api/stations/notes', { method: 'POST', body: JSON.stringify(body) })
   }
   openNoteEditor(module: string, cueNumber?: string) { return this.ui({ command: 'open_note_editor', module, cueNumber }) }
-  ui(body: { command: string; module: string; status?: string; cueNumber?: string }) {
+  ui(body: { command: string; module: string; status?: string; cueNumber?: string; type?: string; priority?: string }) {
     return this.call<{ sent: boolean }>('/api/stations/ui', { method: 'POST', body: JSON.stringify(body) })
   }
   revokeSelf() { return this.call<{ revoked: boolean }>('/api/stations/me', { method: 'DELETE' }) }
