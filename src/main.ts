@@ -305,7 +305,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
   private async ui(body: { command: string; module: string; status?: string; cueNumber?: string; type?: string; priority?: string }): Promise<void> {
     try {
-      await this.api.ui(body)
+      const res = (await this.api.ui(body)) as { prefill?: Record<string, string> }
+      this.log('info', `${body.command} → sent ${JSON.stringify(body)} · server broadcast ${JSON.stringify(res.prefill ?? {})}`)
     } catch (e) {
       this.log('warn', `${body.command} failed: ${describe(e)}`)
     }
