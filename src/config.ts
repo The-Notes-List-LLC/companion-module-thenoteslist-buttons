@@ -9,6 +9,8 @@ export interface ModuleConfig {
   productionName: string
   /** Written by the module while pairing; shown live in the settings window. */
   pairingCode: string
+  /** Label of the lighting-console connection in Companion (e.g. 'eos'); builds the default cue expression. */
+  consoleLabel: string
 }
 
 export const DEFAULT_BASE_URL = 'https://thenoteslist.com'
@@ -41,6 +43,10 @@ export function getConfigFields(view: PairingView = { code: null, expiresAt: nul
     },
     { type: 'textinput', id: 'baseUrl', label: 'Base URL', width: 8, default: DEFAULT_BASE_URL },
     { type: 'checkbox', id: 'startPairing', label: 'Start pairing', width: 4, default: false },
+    {
+      type: 'textinput', id: 'consoleLabel', label: 'Console connection label (for the default cue number)', width: 6, default: 'eos',
+      tooltip: 'The label of your ETC Eos (or other console) connection in Companion. Its live cue is read as $(<label>:cue_active_num).',
+    },
     { type: 'textinput', id: 'pairingCode', label: 'Pairing code (appears here while pairing; type it into the app, then it clears itself)', width: 12, default: '' },
   ]
 }

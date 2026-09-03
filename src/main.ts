@@ -184,6 +184,16 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
   // -------------------------------------------------------------- entities
   private defineEntities(): void {
+    const label = (this.config?.consoleLabel || 'eos').trim()
+    const cueDefault = `$(${label}:cue_active_num)`
+    const cueOption = {
+      type: 'textinput' as const,
+      id: 'cueNumber',
+      label: 'Cue number (blank = none)',
+      default: cueDefault,
+      useVariables: true,
+      tooltip: `Resolved when you press. Default is the console's live cue via the ${label} connection; use $(${label}:cue_pending_num) for the next cue, or type a number.`,
+    }
     const actions: CompanionActionDefinitions = {
       create_note: {
         name: 'Create note',
@@ -192,15 +202,18 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           { type: 'textinput', id: 'description', label: 'Text', default: '', useVariables: true },
           { type: 'dropdown', id: 'priority', label: 'Priority', default: 'medium', choices: PRIORITIES.map((p) => ({ id: p, label: p.replace('_', ' ') })) },
           { type: 'textinput', id: 'type', label: 'Type (value, optional)', default: '' },
+          cueOption,
         ],
         callback: async (event, context) => {
           const description = await context.parseVariablesInString(String(event.options.description ?? ''))
+          const cueNumber = (await context.parseVariablesInString(String(event.options.cueNumber ?? ''))).trim() || undefined
           // One id per PRESS: a retry after a dropped response replays the same note
           // instead of creating a twin (server answers 200 replayed:true).
           const body = {
             id: randomUUID(),
             module: String(event.options.module),
             description,
+            cueNumber,
             priority: String(event.options.priority),
             type: String(event.options.type ?? '') || undefined,
           }
@@ -229,10 +242,12 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         description: 'Opens the Add Note dialog in your browser tab that is on this module page (cue number field focused on Cue Notes). Needs that tab open.',
         options: [
           { type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) },
+          cueOption,
         ],
-        callback: async (event) => {
+        callback: async (event, context) => {
           try {
-            await this.api.openNoteEditor(String(event.options.module))
+            const cueNumber = (await context.parseVariablesInString(String(event.options.cueNumber ?? ''))).trim() || undefined
+            await this.api.openNoteEditor(String(event.options.module), cueNumber)
           } catch (e) {
             this.log('warn', `Open editor failed: ${describe(e)}`)
           }

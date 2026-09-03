@@ -34,12 +34,12 @@ export class StationApi {
   counts() {
     return this.call<Record<'cue' | 'work' | 'production' | 'electrician', { todo: number; review: number; outstanding: number }> & { asOf: string }>('/api/stations/counts')
   }
-  createNote(body: { module: string; description: string; priority?: string; type?: string; id: string }) {
+  createNote(body: { module: string; description: string; priority?: string; type?: string; id: string; cueNumber?: string }) {
     return this.call<{ note: { id: string; status: string; priority: string; type: string | null }; coerced: Record<string, string | null>; replayed: boolean }>(
       '/api/stations/notes', { method: 'POST', body: JSON.stringify(body) })
   }
-  openNoteEditor(module: string) { return this.ui({ command: 'open_note_editor', module }) }
-  ui(body: { command: string; module: string; status?: string }) {
+  openNoteEditor(module: string, cueNumber?: string) { return this.ui({ command: 'open_note_editor', module, cueNumber }) }
+  ui(body: { command: string; module: string; status?: string; cueNumber?: string }) {
     return this.call<{ sent: boolean }>('/api/stations/ui', { method: 'POST', body: JSON.stringify(body) })
   }
   revokeSelf() { return this.call<{ revoked: boolean }>('/api/stations/me', { method: 'DELETE' }) }

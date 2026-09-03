@@ -11,6 +11,10 @@ Drive one production of [The Notes List](https://thenoteslist.com) from your Com
 
 A station belongs to one production. To move to another show, revoke it in Settings and pair again.
 
+## Following the lighting console
+
+Add your console's own Companion connection (for ETC Eos: the **ETC Eos** module, OSC on port 3032, or 3037 with TCP SLIP; enable OSC TCP on the desk under Setup → System → Show Control). Set this module's **Console connection label** to that connection's label (default `eos`). Both note actions then default their **Cue number** to `$(eos:cue_active_num)`, the desk's live cue, resolved at the moment you press. Change it per key to `$(eos:cue_pending_num)` for the next cue, or any other module's variable.
+
 ## Actions
 
 - **Create note** — module (Cue / Work / Production / Electrician), text, priority, type.
