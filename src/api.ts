@@ -29,7 +29,12 @@ export class StationApi {
       '/api/stations/pair/poll', { method: 'POST', body: JSON.stringify({ code, pollSecret }) }, false)
   }
   me() {
-    return this.call<{ station: { id: string; name: string }; production: { id: string; name: string | null }; modules: Record<'cue' | 'work' | 'production' | 'electrician', boolean> }>('/api/stations/me')
+    return this.call<{
+      station: { id: string; name: string }
+      production: { id: string; name: string | null }
+      modules: Record<'cue' | 'work' | 'production' | 'electrician', boolean>
+      options?: Record<'cue' | 'work' | 'production' | 'electrician', { priorities: Array<{ value: string; label: string }>; types: Array<{ value: string; label: string }> }>
+    }>('/api/stations/me')
   }
   counts() {
     return this.call<Record<'cue' | 'work' | 'production' | 'electrician', { todo: number; review: number; outstanding: number }> & { asOf: string }>('/api/stations/counts')

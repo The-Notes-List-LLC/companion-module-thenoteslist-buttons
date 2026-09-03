@@ -17,7 +17,7 @@ Add your console's own Companion connection (for ETC Eos: the **ETC Eos** module
 
 ## Actions
 
-- **Create note** — module (Cue / Work / Production / Electrician), text, priority, type.
+- **Create note** — module (Cue / Work / Production / Electrician), text, priority and type as dropdowns filled with THIS show's real choices (renamed or custom types included), cue number.
 - **Set status of last created note** — Complete, Cancelled, In Review (Work Notes only), or back to To Do. Applies to the last note *this station* created.
 
 - **Open the new-note editor in my open tab** — pops the Add Note dialog in your browser tab that is on that module's page (Cue Notes lands you in the cue number field). Only your own tabs react; nothing happens if none is open.

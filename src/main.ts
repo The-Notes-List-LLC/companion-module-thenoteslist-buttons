@@ -20,7 +20,10 @@ const MODULES = [
 ] as const
 type ModuleId = (typeof MODULES)[number]['id']
 
-const PRIORITIES = ['critical', 'very_high', 'high', 'medium_high', 'medium', 'medium_low', 'low', 'very_low', 'uncritical']
+type Opt = { value: string; label: string }
+type ModuleOptions = Record<ModuleId, { priorities: Opt[]; types: Opt[] }>
+// Fallbacks until /me answers: the app's system defaults.
+const FALLBACK_PRIORITIES: Opt[] = ['critical', 'very_high', 'high', 'medium_high', 'medium', 'medium_low', 'low', 'very_low', 'uncritical'].map((v) => ({ value: v, label: v.replace(/_/g, ' ') }))
 const STATUSES = [
   { id: 'complete', label: 'Complete' },
   { id: 'cancelled', label: 'Cancelled' },
@@ -39,6 +42,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   private connected = false
   private timers: NodeJS.Timeout[] = []
   private pairing: { code: string; pollSecret: string; expiresAt: number } | null = null
+  private options: ModuleOptions | null = null
+  private optionsKey = ''
 
   async init(config: ModuleConfig): Promise<void> {
     await this.configUpdated(config)
@@ -154,6 +159,15 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       this.connected = true
       this.updateStatus(InstanceStatus.Ok, `${me.station.name} · ${me.production.name ?? ''}`)
       this.setVariableValues({ station_name: me.station.name, production_name: me.production.name ?? '', connected: 'true' })
+      // The show's real, renamable types and priorities feed the action dropdowns.
+      if (me.options) {
+        const key = JSON.stringify(me.options)
+        if (key !== this.optionsKey) {
+          this.optionsKey = key
+          this.options = me.options as ModuleOptions
+          this.defineEntities()
+        }
+      }
     } catch (e) {
       this.connected = false
       const err = e as ApiError
@@ -200,8 +214,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         options: [
           { type: 'dropdown', id: 'module', label: 'Module', default: 'work', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) },
           { type: 'textinput', id: 'description', label: 'Text', default: '', useVariables: true },
-          { type: 'dropdown', id: 'priority', label: 'Priority', default: 'medium', choices: PRIORITIES.map((p) => ({ id: p, label: p.replace('_', ' ') })) },
-          { type: 'textinput', id: 'type', label: 'Type (value, optional)', default: '' },
+          ...perModuleChoices('priority', 'Priority', (m) => this.options?.[m]?.priorities ?? FALLBACK_PRIORITIES, 'medium'),
+          ...perModuleChoices('type', 'Type', (m) => this.options?.[m]?.types ?? [], ''),
           cueOption,
         ],
         callback: async (event, context) => {
@@ -209,13 +223,14 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           const cueNumber = (await context.parseVariablesInString(String(event.options.cueNumber ?? ''))).trim() || undefined
           // One id per PRESS: a retry after a dropped response replays the same note
           // instead of creating a twin (server answers 200 replayed:true).
+          const mod = String(event.options.module) as ModuleId
           const body = {
             id: randomUUID(),
-            module: String(event.options.module),
+            module: mod,
             description,
             cueNumber,
-            priority: String(event.options.priority),
-            type: String(event.options.type ?? '') || undefined,
+            priority: String(event.options[`priority_${mod}`] ?? 'medium'),
+            type: String(event.options[`type_${mod}`] ?? '') || undefined,
           }
           for (let attempt = 0; attempt < 2; attempt++) {
             try {
@@ -352,6 +367,33 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     for (const t of this.timers) clearInterval(t)
     this.timers = []
   }
+}
+
+/**
+ * One dropdown per module for a field whose choices differ by module, shown only
+ * when that module is selected. Companion cannot make one dropdown's choices
+ * depend on another option, so this is the idiom.
+ */
+function perModuleChoices(
+  field: 'priority' | 'type',
+  label: string,
+  choicesFor: (m: ModuleId) => Opt[],
+  fallbackDefault: string,
+) {
+  return MODULES.map((m) => {
+    const opts = choicesFor(m.id)
+    const choices = field === 'type' ? [{ id: '', label: '(none)' }, ...opts.map((o) => ({ id: o.value, label: o.label }))] : opts.map((o) => ({ id: o.value, label: o.label }))
+    const def = choices.some((c) => c.id === fallbackDefault) ? fallbackDefault : (choices[0]?.id ?? '')
+    return {
+      type: 'dropdown' as const,
+      id: `${field}_${m.id}`,
+      label: `${label} (${m.label})`,
+      default: def,
+      choices,
+      isVisible: (options: Record<string, unknown>, data: { module: string }) => options.module === data.module,
+      isVisibleData: { module: m.id },
+    }
+  })
 }
 
 function describe(e: unknown): string {
