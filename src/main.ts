@@ -229,8 +229,10 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
             module: mod,
             description,
             cueNumber,
-            priority: String(event.options[`priority_${mod}`] ?? 'medium'),
-            type: String(event.options[`type_${mod}`] ?? '') || undefined,
+            // Keys saved before the dropdowns existed carry the old free-text
+            // `priority`/`type`; the server matches labels too, so honour them.
+            priority: String(event.options[`priority_${mod}`] ?? event.options.priority ?? 'medium'),
+            type: String(event.options[`type_${mod}`] ?? event.options.type ?? '') || undefined,
           }
           for (let attempt = 0; attempt < 2; attempt++) {
             try {
@@ -383,7 +385,10 @@ function perModuleChoices(
   return MODULES.map((m) => {
     const opts = choicesFor(m.id)
     const choices = field === 'type' ? [{ id: '', label: '(none)' }, ...opts.map((o) => ({ id: o.value, label: o.label }))] : opts.map((o) => ({ id: o.value, label: o.label }))
-    const def = choices.some((c) => c.id === fallbackDefault) ? fallbackDefault : (choices[0]?.id ?? '')
+    // Type defaults to the module's FIRST real type (e.g. Cue), not '(none)':
+    // a fresh key should land a typed note without a visit to the dropdown.
+    const firstReal = choices.find((c) => c.id !== '')?.id ?? ''
+    const def = choices.some((c) => c.id === fallbackDefault && c.id !== '') ? fallbackDefault : firstReal
     return {
       type: 'dropdown' as const,
       id: `${field}_${m.id}`,
