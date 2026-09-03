@@ -238,6 +238,41 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           }
         },
       },
+      tab_next_note: {
+        name: 'Tab: highlight next note',
+        description: 'Moves the highlight down one row in your open tab on this module page.',
+        options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
+        callback: async (event) => this.ui({ command: 'next_note', module: String(event.options.module) }),
+      },
+      tab_prev_note: {
+        name: 'Tab: highlight previous note',
+        options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
+        callback: async (event) => this.ui({ command: 'prev_note', module: String(event.options.module) }),
+      },
+      tab_set_highlighted_status: {
+        name: 'Tab: set status of the highlighted note',
+        options: [
+          { type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) },
+          { type: 'dropdown', id: 'status', label: 'Status', default: 'complete', choices: STATUSES },
+        ],
+        callback: async (event) => this.ui({ command: 'set_highlighted_status', module: String(event.options.module), status: String(event.options.status) }),
+      },
+      tab_undo: {
+        name: 'Tab: undo',
+        options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
+        callback: async (event) => this.ui({ command: 'undo', module: String(event.options.module) }),
+      },
+      tab_redo: {
+        name: 'Tab: redo',
+        options: [{ type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
+        callback: async (event) => this.ui({ command: 'redo', module: String(event.options.module) }),
+      },
+      tab_jump_module: {
+        name: 'Tab: jump to module',
+        description: 'Navigates your open tab on this production to the chosen module.',
+        options: [{ type: 'dropdown', id: 'module', label: 'Go to', default: 'work', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) }],
+        callback: async (event) => this.ui({ command: 'jump_module', module: String(event.options.module) }),
+      },
       set_last_status: {
         name: 'Set status of last created note',
         options: [{ type: 'dropdown', id: 'status', label: 'Status', default: 'complete', choices: STATUSES }],
@@ -288,6 +323,14 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.setActionDefinitions(actions)
     this.setFeedbackDefinitions(feedbacks)
     this.setVariableDefinitions(variables)
+  }
+
+  private async ui(body: { command: string; module: string; status?: string }): Promise<void> {
+    try {
+      await this.api.ui(body)
+    } catch (e) {
+      this.log('warn', `${body.command} failed: ${describe(e)}`)
+    }
   }
 
   private clearTimers(): void {

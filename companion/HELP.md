@@ -18,6 +18,8 @@ A station belongs to one production. To move to another show, revoke it in Setti
 
 - **Open the new-note editor in my open tab** — pops the Add Note dialog in your browser tab that is on that module's page (Cue Notes lands you in the cue number field). Only your own tabs react; nothing happens if none is open.
 
+- **Tab: highlight next / previous note**, **Tab: set status of the highlighted note**, **Tab: undo / redo**, **Tab: jump to module** — all act on YOUR open browser tab (clicking a row in the app also highlights it).
+
 ## Feedbacks
 
 - **Outstanding count above threshold** — colour a button when a module has more than N open notes.

@@ -38,8 +38,9 @@ export class StationApi {
     return this.call<{ note: { id: string; status: string; priority: string; type: string | null }; coerced: Record<string, string | null>; replayed: boolean }>(
       '/api/stations/notes', { method: 'POST', body: JSON.stringify(body) })
   }
-  openNoteEditor(module: string) {
-    return this.call<{ sent: boolean }>('/api/stations/ui', { method: 'POST', body: JSON.stringify({ command: 'open_note_editor', module }) })
+  openNoteEditor(module: string) { return this.ui({ command: 'open_note_editor', module }) }
+  ui(body: { command: string; module: string; status?: string }) {
+    return this.call<{ sent: boolean }>('/api/stations/ui', { method: 'POST', body: JSON.stringify(body) })
   }
   revokeSelf() { return this.call<{ revoked: boolean }>('/api/stations/me', { method: 'DELETE' }) }
   setLastStatus(status: string) {
