@@ -2,8 +2,11 @@
  * Read-only ETC Eos reader (#907 cue cursor), sliding-window edition.
  *
  * Opens its own OSC TCP connection to the desk and follows the live cue via
- * implicit output (`/eos/out/active/cue/<list>/<num>`). It never reads the whole
- * cue list: when the live cue changes it asks for THAT cue by number
+ * implicit output (`/eos/out/active/cue/<list>/<num>`). It reads the WHOLE list
+ * too, but gently: a low-priority walk of every index at one request per
+ * 30 ms (a 1700-cue show takes under a minute and costs the desk nothing
+ * noticeable), always yielding to the high-priority window reads. When the live
+ * cue changes it asks for THAT cue by number
  * (`/eos/get/cue/<list>/<num>`), learns the cue's index from the reply address
  * (`/eos/out/get/cue/<list>/<num>/<part>/list/<index>/<count>`), then fetches a
  * small window of neighbours by index, spaced out. Stepping past the window's
@@ -35,7 +38,7 @@ export interface EosReaderEvents {
 const PORT_OSC10 = 3032
 const PORT_SLIP = 3037
 const WINDOW = 8 // cues either side of the live cue kept warm
-const REQUEST_GAP_MS = 40 // one request per 40 ms: ~25/s, invisible to the desk
+const REQUEST_GAP_MS = 30 // one request per 30 ms; the desk never sees a burst
 const RECONNECT_MS = 5000
 
 export class EosReader {
@@ -45,8 +48,11 @@ export class EosReader {
   private reconnectTimer: NodeJS.Timeout | null = null
   private count = 0
   private byIndex: Map<number, EosCue> = new Map()
-  private queue: string[] = []
+  private queue: string[] = [] // high priority: window around live / cursor
+  private background: string[] = [] // low priority: the full-list walk
   private queued: Set<string> = new Set()
+  private lastPublish = 0
+  private wantedByNumber: Set<string> = new Set()
   private drainTimer: NodeJS.Timeout | null = null
 
   constructor(
@@ -75,13 +81,29 @@ export class EosReader {
     return [...this.byIndex.values()].sort((a, b) => a.index - b.index)
   }
 
-  /** Make sure indexes [from, to] are cached (fetches the missing ones, spaced out). */
+  /** Make sure indexes [from, to] are cached (fetches the missing ones, spaced out, ahead of the walk). */
   ensureRange(from: number, to: number): void {
     const lo = Math.max(0, from)
     const hi = this.count > 0 ? Math.min(this.count - 1, to) : to
     for (let i = lo; i <= hi; i++) {
       if (!this.byIndex.has(i)) this.enqueue(`/eos/get/cue/${this.cueList}/index/${i}`)
     }
+  }
+
+  /** Walk the entire list at low priority (after connect, or on demand after edits on the desk). */
+  reloadList(): void {
+    this.byIndex.clear()
+    this.background = []
+    this.enqueue(`/eos/get/cue/${this.cueList}/count`)
+  }
+
+  private walkAll(): void {
+    this.background = []
+    for (let i = 0; i < this.count; i++) {
+      const address = `/eos/get/cue/${this.cueList}/index/${i}`
+      if (!this.byIndex.has(i) && !this.queued.has(address)) this.background.push(address)
+    }
+    if (!this.drainTimer) this.drain()
   }
 
   private connect(): void {
@@ -132,9 +154,13 @@ export class EosReader {
   }
 
   private drain(): void {
-    const address = this.queue.shift()
+    // Window reads first; the background walk only uses idle slots.
+    let address = this.queue.shift()
+    if (address !== undefined) this.queued.delete(address)
+    else {
+      do { address = this.background.shift() } while (address !== undefined && this.queued.has(address))
+    }
     if (address === undefined) { this.drainTimer = null; return }
-    this.queued.delete(address)
     try { this.socket?.send({ address, args: [] }) } catch (e) { this.ev.log('debug', `Eos send failed: ${(e as Error).message}`) }
     this.drainTimer = setTimeout(() => this.drain(), REQUEST_GAP_MS)
   }
@@ -150,14 +176,18 @@ export class EosReader {
       // Learn this cue's index (the reply carries it), then warm its neighbours.
       const known = [...this.byIndex.values()].find((c) => c.number === num)
       if (known) this.ensureRange(known.index - WINDOW, known.index + WINDOW)
-      else this.enqueue(`/eos/get/cue/${this.cueList}/${num}`)
+      else {
+        this.wantedByNumber.add(num)
+        this.enqueue(`/eos/get/cue/${this.cueList}/${num}`)
+      }
       return
     }
     if ((m = a.match(/^\/eos\/out\/get\/cue\/([\d.]+)\/count$/))) {
       if (m[1] !== String(this.cueList)) return
       this.count = Number(msg.args?.[0]?.value ?? 0)
-      this.ev.log('info', `Eos: cue list ${this.cueList} has ${this.count} cues (reading a window around the live cue only)`)
+      this.ev.log('info', `Eos: cue list ${this.cueList} has ${this.count} cues; walking the list in the background (${Math.round((this.count * REQUEST_GAP_MS) / 1000)} s)`)
       this.ev.onCache(this.cache(), this.count)
+      this.walkAll()
       return
     }
     // /eos/out/get/cue/<list>/<cue>/<part>/list/<index>/<count>; args[2] = label. Part 0 = base cue.
@@ -168,15 +198,22 @@ export class EosReader {
       const fresh = !this.byIndex.has(index)
       this.byIndex.set(index, cue)
       if (fresh) {
-        // First sighting of a live cue by number: warm the window around it.
-        this.ensureRange(index - WINDOW, index + WINDOW)
-        this.ev.onCache(this.cache(), this.count)
+        // A by-number reply (live cue) has no window yet: warm it.
+        if (this.wantedByNumber.delete(cue.number)) this.ensureRange(index - WINDOW, index + WINDOW)
+        // Publish progressively, at most every 500 ms, plus once when complete.
+        const now = Date.now()
+        const complete = this.count > 0 && this.byIndex.size >= this.count
+        if (complete || now - this.lastPublish > 500) {
+          this.lastPublish = now
+          this.ev.onCache(this.cache(), this.count)
+          if (complete) this.ev.log('info', `Eos: full cue list cached (${this.byIndex.size} cues)`)
+        }
       }
       return
     }
     // A cue edit on the desk (only sent to subscribers; harmless if it arrives): forget it, re-fetch on demand.
     if ((m = a.match(/^\/eos\/out\/notify\/cue\/([\d.]+)\//))) {
-      if (m[1] === String(this.cueList)) this.byIndex.clear()
+      if (m[1] === String(this.cueList)) this.reloadList()
     }
   }
 }

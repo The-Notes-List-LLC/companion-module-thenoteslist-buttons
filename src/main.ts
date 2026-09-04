@@ -345,6 +345,11 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         options: [],
         callback: async () => this.stepCursor(1),
       },
+      eos_reload_list: {
+        name: 'Eos: reload the cue list (after edits on the desk)',
+        options: [],
+        callback: async () => this.eos?.reloadList(),
+      },
       cue_cursor_reset: {
         name: 'Cue = live (snap the cursor back to the running cue)',
         options: [],
