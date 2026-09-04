@@ -28,6 +28,8 @@ export interface EosCue {
   number: string
   label: string
   index: number
+  /** 0 = the base cue; >0 = a part of that cue (never a cursor target, but it occupies an index). */
+  part: number
 }
 
 export interface EosReaderEvents {
@@ -222,7 +224,7 @@ export class EosReader {
       const num = m[2]
       this.ev.onLive(num)
       // Learn this cue's index (the reply carries it), then warm its neighbours.
-      const known = [...this.byIndex.values()].find((c) => c.number === num)
+      const known = [...this.byIndex.values()].find((c) => c.number === num && c.part === 0)
       if (known) this.ensureRange(known.index - WINDOW, known.index + WINDOW)
       else {
         this.wantedByNumber.add(num)
@@ -253,10 +255,12 @@ export class EosReader {
     // the ARGUMENT page counter, not the cue's position. The cue's sheet index is
     // args[0] (uint32); args[2] is the label. Part 0 = base cue.
     if ((m = a.match(/^\/eos\/out\/get\/cue\/([\d.]+)\/([\d.]+)\/(\d+)\/list\/(\d+)\/(\d+)$/))) {
-      if (m[1] !== String(this.cueList) || m[3] !== '0') return
+      if (m[1] !== String(this.cueList)) return
       const index = Number(msg.args?.[0]?.value)
       if (!Number.isFinite(index)) return
-      const cue: EosCue = { number: m[2], label: String(msg.args?.[2]?.value ?? ''), index }
+      // Parts occupy their own index in the list; keep them so the walk can
+      // complete and the cursor can step OVER them.
+      const cue: EosCue = { number: m[2], label: String(msg.args?.[2]?.value ?? ''), index, part: Number(m[3]) }
       const fresh = !this.byIndex.has(index)
       this.byIndex.set(index, cue)
       if (fresh) {

@@ -186,11 +186,11 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         const changed = num !== this.liveCue
         this.liveCue = num
         if (changed) {
-          const c = this.cues.find((x) => x.number === num)
+          const c = this.cues.find((x) => x.number === num && x.part === 0)
           this.log('info', `Live cue ${num}${c?.label ? ` ${c.label}` : ''}`)
           if (this.config.eosKeepOffset && this.cursorIndex !== null) {
             const offset = this.cursorOffset()
-            const liveIdx = this.cues.find((c) => c.number === num)?.index
+            const liveIdx = this.cues.find((c) => c.number === num && c.part === 0)?.index
             this.cursorIndex = liveIdx !== undefined ? Math.max(0, liveIdx + offset) : null
           } else {
             this.cursorIndex = null // follow live
@@ -209,7 +209,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
   private liveIndex(): number | null {
     if (this.liveCue === null) return null
-    const c = this.cues.find((x) => x.number === this.liveCue)
+    const c = this.cues.find((x) => x.number === this.liveCue && x.part === 0)
     return c ? c.index : null
   }
 
@@ -233,7 +233,9 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       return
     }
     const max = this.cueCount > 0 ? this.cueCount - 1 : Number.MAX_SAFE_INTEGER
-    const next = Math.max(0, Math.min(max, pos + delta))
+    // Step over cue PARTS: they hold an index but are not a place a note lands.
+    let next = Math.max(0, Math.min(max, pos + delta))
+    while (next > 0 && next < max && this.cues.find((c) => c.index === next)?.part) next += delta
     this.cursorIndex = next
     // Keep the window warm around wherever the cursor goes.
     this.eos?.ensureRange(next - 8, next + 8)
@@ -252,12 +254,12 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     const pos = this.cursorPos()
     const hit = pos === null ? undefined : this.cues.find((c) => c.index === pos)
     if (hit) return hit
-    return this.liveCue !== null ? { number: this.liveCue, label: '', index: -1 } : null
+    return this.liveCue !== null ? { number: this.liveCue, label: '', index: -1, part: 0 } : null
   }
 
   private publishCursor(): void {
     const c = this.cursorCue()
-    const live = this.liveCue === null ? undefined : this.cues.find((x) => x.number === this.liveCue)
+    const live = this.liveCue === null ? undefined : this.cues.find((x) => x.number === this.liveCue && x.part === 0)
     this.setVariableValues({
       cue_live: this.liveCue ?? '',
       cue_live_label: live?.label ?? '',
