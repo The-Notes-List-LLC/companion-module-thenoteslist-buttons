@@ -41,7 +41,7 @@ export interface EosReaderEvents {
 const PORT_OSC10 = 3032
 const PORT_SLIP = 3037
 const WINDOW = 8 // cues either side of the live cue kept warm
-const REQUEST_GAP_MS = 30 // one request per 30 ms; the desk never sees a burst
+const REQUEST_GAP_MS = 22 // one request per 22 ms (~45/s); still no burst for the desk
 const RECONNECT_MS = 5000
 
 export class EosReader {
@@ -56,6 +56,8 @@ export class EosReader {
   private queued: Set<string> = new Set()
   private lastPublish = 0
   private publishTimer: NodeJS.Timeout | null = null
+  private walkRetried = false
+  private walkAnnounced = false
   private wantedByNumber: Set<string> = new Set()
   private subscribed = false
   private announcedCount = false
@@ -105,6 +107,7 @@ export class EosReader {
   }
 
   private walkAll(): void {
+    this.walkAnnounced = false
     this.background = []
     for (let i = 0; i < this.count; i++) {
       const address = `/eos/get/cue/${this.cueList}/index/${i}`
@@ -176,10 +179,31 @@ export class EosReader {
     else {
       do { address = this.background.shift() } while (address !== undefined && this.queued.has(address))
     }
-    if (address === undefined) { this.drainTimer = null; return }
+    if (address === undefined) {
+      this.drainTimer = null
+      this.onQueueIdle()
+      return
+    }
     const args = address === '/eos/subscribe' ? [{ type: 'i', value: 1 }] : []
     try { this.socket?.send({ address, args }) } catch (e) { this.ev.log('debug', `Eos send failed: ${(e as Error).message}`) }
     this.drainTimer = setTimeout(() => this.drain(), REQUEST_GAP_MS)
+  }
+
+  /** Nothing left to send: the walk is over. Retry unanswered indexes once, then report. */
+  private onQueueIdle(): void {
+    if (this.count === 0 || this.walkAnnounced) return
+    const missing: number[] = []
+    for (let i = 0; i < this.count; i++) if (!this.byIndex.has(i)) missing.push(i)
+    if (missing.length > 0 && !this.walkRetried) {
+      this.walkRetried = true
+      this.ev.log('info', `Eos: ${missing.length} cue records unanswered; asking once more`)
+      for (const i of missing) this.background.push(`/eos/get/cue/${this.cueList}/index/${i}`)
+      this.drain()
+      return
+    }
+    this.walkAnnounced = true
+    this.ev.log('info', `Eos: cue list walk complete — ${this.byIndex.size} of ${this.count} cues cached${missing.length ? ` (${missing.length} unanswered)` : ''}`)
+    this.ev.onCache(this.cache(), this.count)
   }
 
   private onBundle(bundle: OscBundle): void {
@@ -221,6 +245,7 @@ export class EosReader {
         this.byIndex.clear()
       }
       this.ev.onCache(this.cache(), this.count)
+      this.walkRetried = false
       this.walkAll()
       return
     }
@@ -243,9 +268,6 @@ export class EosReader {
         if (complete || now - this.lastPublish > 500) {
           this.lastPublish = now
           this.ev.onCache(this.cache(), this.count)
-          if (complete) {
-            this.ev.log('info', `Eos: cue list walk complete — ${this.byIndex.size} of ${this.count} cues cached`)
-          }
         } else if (!this.publishTimer) {
           // Trailing flush so the LAST record of a burst is never left unpublished.
           this.publishTimer = setTimeout(() => {
