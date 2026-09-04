@@ -233,6 +233,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.cursorIndex = next
     // Keep the window warm around wherever the cursor goes.
     this.eos?.ensureRange(next - 8, next + 8)
+    const hit = this.cues.find((c) => c.index === next)
+    this.log('info', `Cue cursor: step ${delta > 0 ? '▶' : '◀'} from index ${pos} to ${next} → ${hit ? `cue ${hit.number} "${hit.label}"` : 'not cached yet'} (live ${this.liveCue ?? 'unknown'} @ index ${this.liveIndex() ?? '?'}, cache ${this.cues.length}/${this.cueCount})`)
     this.publishCursor()
   }
 
@@ -251,6 +253,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
   private publishCursor(): void {
     const c = this.cursorCue()
+    this.log('debug', `Cue cursor publish: live=${this.liveCue ?? 'null'} cursorIndex=${this.cursorIndex ?? 'null'} → ${c ? c.number : 'null'}`)
     const live = this.liveCue === null ? undefined : this.cues.find((x) => x.number === this.liveCue)
     this.setVariableValues({
       cue_live: this.liveCue ?? '',
