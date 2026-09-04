@@ -8,7 +8,8 @@
  * `/eos/out/notify/cue/<list>/...` and trigger a debounced re-read.
  *
  * It NEVER sends a command that changes console state: no /eos/key, no
- * /eos/cmd, no /eos/cue fire, not even /eos/reset. Firing stays with the
+ * /eos/cmd, no /eos/cue fire. (/eos/reset only clears this client's output
+ * subscription state on the desk and asks for a resend.) Firing stays with the
  * ETC Eos module if you use one; both can be connected at once.
  */
 // `osc` is CommonJS; under Node's ESM loader only the default export is importable.
@@ -73,6 +74,9 @@ export class EosReader {
       this.connected = true
       this.ev.onStatus(true, `Eos ${this.host}:${port}`)
       this.ev.log('info', `Eos: connected to ${this.host}:${port} (read-only), reading cue list ${this.cueList}`)
+      // /eos/reset resets THIS CLIENT's OSC output state on the desk so it resends
+      // the current active/pending cue at once; it changes nothing on the console.
+      this.send('/eos/reset', [])
       this.send('/eos/subscribe', [{ type: 'i', value: 1 }])
       this.readList()
     })
@@ -126,6 +130,7 @@ export class EosReader {
 
   private onMessage(msg: OscMessage): void {
     const a = msg.address
+    this.ev.log('debug', `Eos ← ${a}`)
     let m: RegExpMatchArray | null
 
     // Live position (implicit output after subscribe).
