@@ -9,8 +9,6 @@ export interface ModuleConfig {
   productionName: string
   /** Written by the module while pairing; shown live in the settings window. */
   pairingCode: string
-  /** Label of the lighting-console connection in Companion (e.g. 'eos'); builds the default cue expression when no desk IP is set. */
-  consoleLabel: string
   /** ETC Eos desk IP for the read-only cue reader; blank = use the variable expression instead. */
   eosHost: string
   eosUseSlip: boolean
@@ -49,15 +47,11 @@ export function getConfigFields(view: PairingView = { code: null, expiresAt: nul
     },
     { type: 'textinput', id: 'baseUrl', label: 'Base URL', width: 8, default: DEFAULT_BASE_URL },
     { type: 'checkbox', id: 'startPairing', label: 'Start pairing', width: 4, default: false },
-    { type: 'static-text', id: 'eos_info', width: 12, label: 'ETC Eos (read-only)', value: 'Enter the desk IP and this module reads the cue list itself: the live cue plus a cursor you can step back and forward with keys, so a late press still lands on the right cue. It never sends commands to the desk. Leave blank to use another console\'s Companion variable instead.' },
+    { type: 'static-text', id: 'eos_info', width: 12, label: 'ETC Eos (read-only)', value: 'Enter the desk IP and this module reads the cue list itself: the live cue plus a cursor you can step back and forward with keys, so a late press still lands on the right cue. It never sends commands to the desk. Cue number boxes on keys stay variable-aware, so any Companion variable can still be typed there by hand.' },
     { type: 'textinput', id: 'eosHost', label: 'Eos desk IP', width: 5, default: '' },
     { type: 'checkbox', id: 'eosUseSlip', label: 'Use TCP SLIP (port 3037, Eos 3.1+)', width: 4, default: false },
     { type: 'number', id: 'eosCueList', label: 'Cue list', width: 3, default: 1, min: 1, max: 999 },
     { type: 'checkbox', id: 'eosKeepOffset', label: 'Keep cursor offset when the desk fires the next cue', width: 12, default: false },
-    {
-      type: 'textinput', id: 'consoleLabel', label: 'Console connection label (for the default cue number)', width: 6, default: 'eos',
-      tooltip: 'The label of your ETC Eos (or other console) connection in Companion. Its live cue is read as $(<label>:cue_active_num).',
-    },
     { type: 'textinput', id: 'pairingCode', label: 'Pairing code (appears here while pairing; type it into the app, then it clears itself)', width: 12, default: '' },
   ]
 }

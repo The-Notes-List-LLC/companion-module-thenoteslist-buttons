@@ -293,17 +293,14 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
   // -------------------------------------------------------------- entities
   private defineEntities(): void {
-    const label = (this.config?.consoleLabel || 'eos').trim()
-    const cueDefault = (this.config?.eosHost || '').trim() ? '$(thenoteslist:cue_cursor)' : `$(${label}:cue_active_num)`
+    const cueDefault = '$(thenoteslist:cue_cursor)'
     const cueOption = {
       type: 'textinput' as const,
       id: 'cueNumber',
       label: 'Cue number (blank = none)',
       default: cueDefault,
       useVariables: true,
-      tooltip: (this.config?.eosHost || '').trim()
-        ? 'Resolved when you press. Default is the cue cursor ($(thenoteslist:cue_cursor)): the live cue unless you stepped it with the Cue ◀ / ▶ keys. $(thenoteslist:cue_live) is always the live cue.'
-        : `Resolved when you press. Default is the console's live cue via the ${label} connection; use $(${label}:cue_pending_num) for the next cue, or type a number.`,
+      tooltip: 'Resolved when you press. Default is the cue cursor ($(thenoteslist:cue_cursor)): the live cue unless you stepped it with the Cue ◀ / ▶ keys. $(thenoteslist:cue_live) is always the live cue. Any other variable or a typed number also works.',
     }
     const actions: CompanionActionDefinitions = {
       open_note_editor: {
@@ -468,10 +465,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
    */
   private buildPresets(): CompanionPresetDefinitions {
     const presets: CompanionPresetDefinitions = {}
-    const label = (this.config?.consoleLabel || 'eos').trim()
-    const useReader = !!(this.config?.eosHost || '').trim()
-    const cueVar = useReader ? '$(thenoteslist:cue_cursor)' : `$(${label}:cue_active_num)`
-    if (useReader) {
+    const cueVar = '$(thenoteslist:cue_cursor)'
+    {
       presets.cue_prev = { type: 'button', category: 'Cue cursor', name: 'Cue ◀', style: { text: '◀ CUE\n$(thenoteslist:cue_cursor)', size: 'auto', bgcolor: combineRgb(30, 30, 30), color: combineRgb(255, 255, 255) }, steps: [{ down: [{ actionId: 'cue_cursor_prev', options: {} }], up: [] }], feedbacks: [{ feedbackId: 'cursor_off_live', options: {} }] }
       presets.cue_next = { type: 'button', category: 'Cue cursor', name: 'Cue ▶', style: { text: 'CUE ▶\n$(thenoteslist:cue_cursor)', size: 'auto', bgcolor: combineRgb(30, 30, 30), color: combineRgb(255, 255, 255) }, steps: [{ down: [{ actionId: 'cue_cursor_next', options: {} }], up: [] }], feedbacks: [{ feedbackId: 'cursor_off_live', options: {} }] }
       presets.cue_reset = { type: 'button', category: 'Cue cursor', name: 'Cue = live', style: { text: 'LIVE\n$(thenoteslist:cue_live)', size: 'auto', bgcolor: combineRgb(30, 30, 30), color: combineRgb(255, 255, 255) }, steps: [{ down: [{ actionId: 'cue_cursor_reset', options: {} }], up: [] }], feedbacks: [{ feedbackId: 'eos_connected', options: {} }] }
