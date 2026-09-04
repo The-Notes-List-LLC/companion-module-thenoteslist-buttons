@@ -21,7 +21,7 @@
  * current active/pending cue once on connect.
  */
 import osc from 'osc'
-import type { OscMessage, TCPSocketPort as TCPSocketPortType } from 'osc'
+import type { OscBundle, OscMessage, TCPSocketPort as TCPSocketPortType } from 'osc'
 const { TCPSocketPort } = osc
 
 export interface EosCue {
@@ -129,6 +129,9 @@ export class EosReader {
       this.enqueue(`/eos/get/cue/${this.cueList}/count`)
     })
     socket.on('message', (msg) => this.onMessage(msg))
+    // Eos answers /eos/get/cue/... with BUNDLES (the cue record plus its fx /
+    // links / actions messages). Unpack them; nested bundles too.
+    socket.on('bundle', (bundle) => this.onBundle(bundle))
     socket.on('error', (err) => {
       if (this.connected) this.ev.log('warn', `Eos: ${err.message}`)
     })
@@ -176,8 +179,22 @@ export class EosReader {
     this.drainTimer = setTimeout(() => this.drain(), REQUEST_GAP_MS)
   }
 
+  private onBundle(bundle: OscBundle): void {
+    for (const p of bundle.packets ?? []) {
+      if ((p as OscBundle).packets) this.onBundle(p as OscBundle)
+      else if ((p as OscMessage).address) this.onMessage(p as OscMessage)
+    }
+  }
+
+  private seenGetReplies = 0
+
   private onMessage(msg: OscMessage): void {
     const a = msg.address
+    this.ev.log('debug', `Eos ← ${a}`)
+    if (a.startsWith('/eos/out/get/cue/') && this.seenGetReplies < 5) {
+      this.seenGetReplies++
+      this.ev.log('info', `Eos: cue record reply ${a} (${(msg.args ?? []).length} args)`)
+    }
     let m: RegExpMatchArray | null
 
     if ((m = a.match(/^\/eos\/out\/active\/cue\/([\d.]+)\/([\d.]+)$/))) {
@@ -224,7 +241,7 @@ export class EosReader {
           this.lastPublish = now
           this.ev.onCache(this.cache(), this.count)
           if (complete) {
-            this.ev.log('info', `Eos: full cue list cached (${this.byIndex.size} cues)`)
+            this.ev.log('info', `Eos: cue list walk complete — ${this.byIndex.size} of ${this.count} cues cached`)
           }
         }
       }
