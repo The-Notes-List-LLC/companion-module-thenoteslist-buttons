@@ -10,4 +10,6 @@ declare module 'osc' {
     on(event: 'error', cb: (err: Error) => void): void
     on(event: 'message', cb: (msg: OscMessage) => void): void
   }
+  const osc: { TCPSocketPort: typeof TCPSocketPort }
+  export default osc
 }

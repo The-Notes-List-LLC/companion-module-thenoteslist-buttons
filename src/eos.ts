@@ -11,7 +11,10 @@
  * /eos/cmd, no /eos/cue fire, not even /eos/reset. Firing stays with the
  * ETC Eos module if you use one; both can be connected at once.
  */
-import { TCPSocketPort, type OscMessage } from 'osc'
+// `osc` is CommonJS; under Node's ESM loader only the default export is importable.
+import osc from 'osc'
+import type { OscMessage, TCPSocketPort as TCPSocketPortType } from 'osc'
+const { TCPSocketPort } = osc
 
 export interface EosCue {
   number: string
@@ -33,7 +36,7 @@ const NOTIFY_DEBOUNCE_MS = 1000
 const RECONNECT_MS = 5000
 
 export class EosReader {
-  private socket: TCPSocketPort | null = null
+  private socket: TCPSocketPortType | null = null
   private connected = false
   private closed = false
   private reconnectTimer: NodeJS.Timeout | null = null
