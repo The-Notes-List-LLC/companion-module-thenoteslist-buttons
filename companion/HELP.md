@@ -25,7 +25,13 @@ Everything acts on **your own open browser tab** of The Notes List, on the page 
 - **Undo / Redo**.
 - **Go to module** — navigates your tab to another module of the same show.
 
+## Presets
+
+Under **Presets** you get one ready-made key per note type of your show ("New note · Cue Notes" → Cue, Director, Stage Manager…): the editor action with that type, the key coloured like the chip in the app, and the console's live cue on the face. Drag them onto the deck.
+
 ## Feedbacks
+
+- **Colour key by note type** / **by priority** — background matches the chip colour in the app (renamed or recoloured types follow within a minute).
 
 - **Outstanding count above threshold** — colour a button when a module has more than N open notes.
 - **Connected** — station is paired and the production accepts it.

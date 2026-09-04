@@ -5,6 +5,7 @@ import {
   runEntrypoint,
   type CompanionActionDefinitions,
   type CompanionFeedbackDefinitions,
+  type CompanionPresetDefinitions,
   type CompanionVariableDefinition,
   type SomeCompanionConfigField,
 } from '@companion-module/base'
@@ -20,7 +21,7 @@ const MODULES = [
 ] as const
 type ModuleId = (typeof MODULES)[number]['id']
 
-type Opt = { value: string; label: string }
+type Opt = { value: string; label: string; color?: string }
 type ModuleOptions = Record<ModuleId, { priorities: Opt[]; types: Opt[] }>
 // Fallbacks until /me answers: the app's system defaults.
 const FALLBACK_PRIORITIES: Opt[] = ['critical', 'very_high', 'high', 'medium_high', 'medium', 'medium_low', 'low', 'very_low', 'uncritical'].map((v) => ({ value: v, label: v.replace(/_/g, ' ') }))
@@ -278,6 +279,32 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         ],
         callback: (fb) => this.counts[fb.options.module as ModuleId] > Number(fb.options.threshold ?? 0),
       },
+      type_color: {
+        type: 'advanced',
+        name: 'Colour key by note type (matches the chip in the app)',
+        options: [
+          { type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) },
+          ...perModuleChoices('type', 'Type', (m) => this.options?.[m]?.types ?? [], ''),
+        ],
+        callback: (fb) => {
+          const mod = fb.options.module as ModuleId
+          const opt = (this.options?.[mod]?.types ?? []).find((t) => t.value === fb.options[`type_${mod}`])
+          return opt?.color ? keyStyle(opt.color) : {}
+        },
+      },
+      priority_color: {
+        type: 'advanced',
+        name: 'Colour key by priority (matches the chip in the app)',
+        options: [
+          { type: 'dropdown', id: 'module', label: 'Module', default: 'cue', choices: MODULES.map((m) => ({ id: m.id, label: m.label })) },
+          ...perModuleChoices('priority', 'Priority', (m) => this.options?.[m]?.priorities ?? FALLBACK_PRIORITIES, 'medium'),
+        ],
+        callback: (fb) => {
+          const mod = fb.options.module as ModuleId
+          const opt = (this.options?.[mod]?.priorities ?? []).find((p) => p.value === fb.options[`priority_${mod}`])
+          return opt?.color ? keyStyle(opt.color) : {}
+        },
+      },
       connected: {
         type: 'boolean',
         name: 'Connected',
@@ -301,6 +328,41 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.setActionDefinitions(actions)
     this.setFeedbackDefinitions(feedbacks)
     this.setVariableDefinitions(variables)
+    this.setPresetDefinitions(this.buildPresets())
+  }
+
+  /**
+   * One ready-made key per module × type from THIS show: the New note action
+   * with that type, the matching chip colour, and the live cue on the face.
+   */
+  private buildPresets(): CompanionPresetDefinitions {
+    const presets: CompanionPresetDefinitions = {}
+    const label = (this.config?.consoleLabel || 'eos').trim()
+    for (const m of MODULES) {
+      const types = this.options?.[m.id]?.types ?? []
+      for (const t of types) {
+        const style = t.color ? keyStyle(t.color) : { bgcolor: combineRgb(40, 40, 40), color: combineRgb(255, 255, 255) }
+        presets[`new_${m.id}_${t.value}`] = {
+          type: 'button',
+          category: `New note · ${m.label}`,
+          name: `${t.label} (${m.label})`,
+          style: { text: `${t.label}\n$(${label}:cue_active_num)`, size: 'auto', ...style },
+          steps: [
+            {
+              down: [
+                {
+                  actionId: 'open_note_editor',
+                  options: { module: m.id, [`type_${m.id}`]: t.value, [`priority_${m.id}`]: 'medium', cueNumber: `$(${label}:cue_active_num)` },
+                },
+              ],
+              up: [],
+            },
+          ],
+          feedbacks: [{ feedbackId: 'type_color', options: { module: m.id, [`type_${m.id}`]: t.value } }],
+        }
+      }
+    }
+    return presets
   }
 
   private async ui(body: { command: string; module: string; status?: string; cueNumber?: string; type?: string; priority?: string }): Promise<void> {
@@ -346,6 +408,16 @@ function perModuleChoices(
       isVisibleData: { module: m.id },
     }
   })
+}
+
+/** Background = the chip colour; text white or black by luminance so it stays readable. */
+function keyStyle(hex: string): { bgcolor: number; color: number } {
+  const h = hex.replace('#', '')
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  const r = parseInt(full.slice(0, 2), 16), g = parseInt(full.slice(2, 4), 16), b = parseInt(full.slice(4, 6), 16)
+  if ([r, g, b].some((n) => Number.isNaN(n))) return { bgcolor: combineRgb(40, 40, 40), color: combineRgb(255, 255, 255) }
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+  return { bgcolor: combineRgb(r, g, b), color: luminance > 0.6 ? combineRgb(0, 0, 0) : combineRgb(255, 255, 255) }
 }
 
 function describe(e: unknown): string {

@@ -33,7 +33,7 @@ export class StationApi {
       station: { id: string; name: string }
       production: { id: string; name: string | null }
       modules: Record<'cue' | 'work' | 'production' | 'electrician', boolean>
-      options?: Record<'cue' | 'work' | 'production' | 'electrician', { priorities: Array<{ value: string; label: string }>; types: Array<{ value: string; label: string }> }>
+      options?: Record<'cue' | 'work' | 'production' | 'electrician', { priorities: Array<{ value: string; label: string; color?: string }>; types: Array<{ value: string; label: string; color?: string }> }>
     }>('/api/stations/me')
   }
   counts() {
