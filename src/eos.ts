@@ -224,10 +224,13 @@ export class EosReader {
       this.walkAll()
       return
     }
-    // /eos/out/get/cue/<list>/<cue>/<part>/list/<index>/<count>; args[2] = label. Part 0 = base cue.
+    // /eos/out/get/cue/<list>/<cue>/<part>/list/<page>/<pages> — the trailing pair is
+    // the ARGUMENT page counter, not the cue's position. The cue's sheet index is
+    // args[0] (uint32); args[2] is the label. Part 0 = base cue.
     if ((m = a.match(/^\/eos\/out\/get\/cue\/([\d.]+)\/([\d.]+)\/(\d+)\/list\/(\d+)\/(\d+)$/))) {
       if (m[1] !== String(this.cueList) || m[3] !== '0') return
-      const index = Number(m[4])
+      const index = Number(msg.args?.[0]?.value)
+      if (!Number.isFinite(index)) return
       const cue: EosCue = { number: m[2], label: String(msg.args?.[2]?.value ?? ''), index }
       const fresh = !this.byIndex.has(index)
       this.byIndex.set(index, cue)
