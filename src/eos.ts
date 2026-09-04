@@ -44,6 +44,8 @@ export class EosReader {
   private notifyTimer: NodeJS.Timeout | null = null
   private expectedCount = 0
   private pending: Map<number, EosCue> = new Map()
+  private settleTimer: NodeJS.Timeout | null = null
+  private publishedSize = 0
 
   constructor(
     private readonly host: string,
@@ -61,6 +63,7 @@ export class EosReader {
     this.closed = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.notifyTimer) clearTimeout(this.notifyTimer)
+    if (this.settleTimer) clearTimeout(this.settleTimer)
     try { this.socket?.close() } catch { /* already closed */ }
     this.socket = null
     this.connected = false
@@ -115,6 +118,7 @@ export class EosReader {
   readList(): void {
     this.pending = new Map()
     this.expectedCount = 0
+    this.publishedSize = 0
     this.send(`/eos/get/cue/${this.cueList}/count`, [])
   }
 
@@ -126,6 +130,19 @@ export class EosReader {
       if (i < count) setTimeout(tick, BATCH_GAP_MS)
     }
     tick()
+  }
+
+  private publish(final: boolean): void {
+    if (this.pending.size === 0 || (!final && this.pending.size === this.publishedSize)) return
+    const cues = [...this.pending.entries()].sort((x, y) => x[0] - y[0]).map(([, c]) => c)
+    this.publishedSize = cues.length
+    if (final) {
+      if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null }
+      const missing = Math.max(0, this.expectedCount - cues.length)
+      this.ev.log('info', `Eos: cached ${cues.length} cues of list ${this.cueList}${missing ? ` (${missing} replies missing; re-reading)` : ''}`)
+      if (missing) setTimeout(() => this.readList(), 3000)
+    }
+    this.ev.onList(cues)
   }
 
   private onMessage(msg: OscMessage): void {
@@ -155,9 +172,13 @@ export class EosReader {
       const index = Number(m[4])
       const label = String(msg.args?.[2]?.value ?? '')
       this.pending.set(index, { number: m[2], label })
-      if (this.expectedCount > 0 && this.pending.size >= this.expectedCount) {
-        const cues = [...this.pending.entries()].sort((x, y) => x[0] - y[0]).map(([, c]) => c)
-        this.ev.onList(cues)
+      // Publish progressively (every 100 replies), and finalise after 1.5 s of
+      // quiet even if a reply went missing — a 1700-cue list must not stall on one.
+      if (this.pending.size % 100 === 0) this.publish(false)
+      if (this.expectedCount > 0 && this.pending.size >= this.expectedCount) this.publish(true)
+      else {
+        if (this.settleTimer) clearTimeout(this.settleTimer)
+        this.settleTimer = setTimeout(() => { this.settleTimer = null; this.publish(true) }, 1500)
       }
       return
     }

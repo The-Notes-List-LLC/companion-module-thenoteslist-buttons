@@ -192,9 +192,10 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         this.publishCursor()
       },
       onList: (cues) => {
+        const cursorCue = this.cursorIndex !== null ? this.cues[this.cursorIndex]?.number : undefined
         this.cues = cues
-        this.cursorIndex = null
-        this.log('info', `Eos: cached ${cues.length} cues of list ${this.config.eosCueList || 1}`)
+        // Keep a stepped cursor on the same cue number across a re-read.
+        this.cursorIndex = cursorCue ? (cues.findIndex((c) => c.number === cursorCue) >= 0 ? cues.findIndex((c) => c.number === cursorCue) : null) : null
         this.publishCursor()
       },
       log: (level, msg) => this.log(level, msg),
