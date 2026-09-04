@@ -9,8 +9,8 @@
  * cue changes it asks for THAT cue by number
  * (`/eos/get/cue/<list>/<num>`), learns the cue's index from the reply address
  * (`/eos/out/get/cue/<list>/<num>/<part>/list/<index>/<count>`), then fetches a
- * small window of neighbours by index, spaced out. Once the background walk
- * has the whole list it sends `/eos/subscribe 1`, so edits on the desk arrive
+ * small window of neighbours by index, spaced out. It subscribes on connect
+ * (the active-cue output rides the subscription), so edits on the desk arrive
  * as `/eos/out/notify/cue/<list>/...` and only the named cues are re-fetched
  * (plus a re-count for inserts/deletes). The wheel/channel stream that
  * subscribe also brings is simply ignored; the earlier lag came from the burst
@@ -120,7 +120,12 @@ export class EosReader {
       this.byIndex.clear()
       this.ev.onStatus(true, `Eos ${this.host}:${port}`)
       this.ev.log('info', `Eos: connected to ${this.host}:${port} (read-only), cue list ${this.cueList}`)
+      // Subscribe at once: the active/pending cue outputs ride the subscription.
+      // The wheel/channel traffic it also brings is ignored; the earlier lag was
+      // the request burst, which the spaced walk below no longer causes.
+      this.subscribed = true
       this.enqueue('/eos/reset')
+      this.enqueue('/eos/subscribe')
       this.enqueue(`/eos/get/cue/${this.cueList}/count`)
     })
     socket.on('message', (msg) => this.onMessage(msg))
@@ -220,12 +225,6 @@ export class EosReader {
           this.ev.onCache(this.cache(), this.count)
           if (complete) {
             this.ev.log('info', `Eos: full cue list cached (${this.byIndex.size} cues)`)
-            if (!this.subscribed) {
-              // Now that the walk is done, let the desk push cue edits to us.
-              this.subscribed = true
-              this.enqueue('/eos/subscribe')
-              this.ev.log('info', 'Eos: subscribed for cue edits (wheel/channel traffic is ignored)')
-            }
           }
         }
       }

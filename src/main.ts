@@ -222,7 +222,12 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
   private stepCursor(delta: number): void {
     const pos = this.cursorPos()
-    if (pos === null) return // desk has not told us the live cue yet
+    if (pos === null) {
+      this.log('warn', this.liveCue === null
+        ? 'Cue cursor: the desk has not reported a live cue yet (fire a cue, or check the Eos connection).'
+        : `Cue cursor: live cue ${this.liveCue} is not in the cache yet; try again in a second.`)
+      return
+    }
     const max = this.cueCount > 0 ? this.cueCount - 1 : Number.MAX_SAFE_INTEGER
     const next = Math.max(0, Math.min(max, pos + delta))
     this.cursorIndex = next
