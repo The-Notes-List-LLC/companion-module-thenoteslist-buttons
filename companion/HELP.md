@@ -11,7 +11,13 @@ Drive one production of [The Notes List](https://thenoteslist.com) from your Com
 
 A station belongs to one production. To move to another show, revoke it in Settings and pair again.
 
-## Following the lighting console
+## Following the lighting console (ETC Eos, read-only)
+
+Enter the desk's IP in **Eos desk IP** (tick **Use TCP SLIP** if the desk uses port 3037 / OSC 1.1; the Eos default is port 3032). Enable OSC RX/TX on the desk under Setup → System → Show Control → OSC. This module then reads cue list 1 (change **Cue list** if needed) in sheet order and follows the live cue. It never sends a command to the desk.
+
+**Cue cursor.** Notes land on the cursor, which normally rides the live cue. If a press comes late, the keys **Cue ◀** / **Cue ▶** step the cursor back or forward through the cached list without touching the console; **Cue = live** snaps it back. When the desk fires the next cue the cursor returns to live (tick **Keep cursor offset** to hold the offset instead). Key faces: `$(thenoteslist:cue_cursor)` (with `cue_cursor_label`), `$(thenoteslist:cue_live)`; the **Cue cursor is NOT on the live cue** feedback turns a key amber while you are stepped away. Presets under "Cue cursor".
+
+### Other consoles (no desk IP)
 
 Add your console's own Companion connection (for ETC Eos: the **ETC Eos** module, OSC on port 3032, or 3037 with TCP SLIP; enable OSC TCP on the desk under Setup → System → Show Control). Set this module's **Console connection label** to that connection's label (default `eos`). Both note actions then default their **Cue number** to `$(eos:cue_active_num)`, the desk's live cue, resolved at the moment you press. Change it per key to `$(eos:cue_pending_num)` for the next cue, or any other module's variable.
 

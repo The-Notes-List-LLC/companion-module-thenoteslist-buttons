@@ -12,6 +12,7 @@ import {
 import { randomUUID } from 'node:crypto'
 import { StationApi, type ApiError } from './api.js'
 import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig } from './config.js'
+import { EosReader, type EosCue } from './eos.js'
 
 const MODULES = [
   { id: 'cue', label: 'Cue Notes' },
@@ -45,6 +46,12 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   private pairing: { code: string; pollSecret: string; expiresAt: number } | null = null
   private options: ModuleOptions | null = null
   private optionsKey = ''
+  // Cue cursor (#907): the desk's list in sheet order, the live cue, and where
+  // the operator has stepped to. Cursor index is relative to `cues`.
+  private eos: EosReader | null = null
+  private cues: EosCue[] = []
+  private liveCue: string | null = null
+  private cursorIndex: number | null = null
 
   async init(config: ModuleConfig): Promise<void> {
     await this.configUpdated(config)
@@ -52,6 +59,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
   async destroy(): Promise<void> {
     this.clearTimers()
+    this.eos?.stop()
+    this.eos = null
   }
 
   getConfigFields(): SomeCompanionConfigField[] {
@@ -69,6 +78,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.config = { ...config, baseUrl: config.baseUrl || DEFAULT_BASE_URL }
     this.api = new StationApi(this.config.baseUrl, this.config.token || null)
     this.defineEntities()
+    this.startEos()
 
     if (this.config.startPairing || !this.config.token) {
       // A pairing already in flight (code not yet expired) survives a config
@@ -153,6 +163,90 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     }
   }
 
+  // ---------------------------------------------------------------- Eos cue cursor
+  private startEos(): void {
+    this.eos?.stop()
+    this.eos = null
+    const host = (this.config.eosHost || '').trim()
+    if (!host) {
+      this.setVariableValues({ eos_connected: 'false', cue_live: '', cue_cursor: '', cue_cursor_label: '', cue_cursor_offset: '0' })
+      return
+    }
+    this.eos = new EosReader(host, !!this.config.eosUseSlip, Number(this.config.eosCueList) || 1, {
+      onStatus: (connected) => {
+        this.setVariableValues({ eos_connected: connected ? 'true' : 'false' })
+        this.checkFeedbacks('eos_connected')
+      },
+      onLive: (num) => {
+        const changed = num !== this.liveCue
+        this.liveCue = num
+        if (changed) {
+          if (this.config.eosKeepOffset && this.cursorIndex !== null) {
+            const liveIdx = this.cues.findIndex((c) => c.number === num)
+            const offset = this.cursorOffset()
+            this.cursorIndex = liveIdx >= 0 ? clamp(liveIdx + offset, this.cues.length) : null
+          } else {
+            this.cursorIndex = null // follow live
+          }
+        }
+        this.publishCursor()
+      },
+      onList: (cues) => {
+        this.cues = cues
+        this.cursorIndex = null
+        this.log('info', `Eos: cached ${cues.length} cues of list ${this.config.eosCueList || 1}`)
+        this.publishCursor()
+      },
+      log: (level, msg) => this.log(level, msg),
+    })
+    this.eos.start()
+  }
+
+  /** Where the cursor points: an explicit index, else the live cue's index. */
+  private cursorPos(): number | null {
+    if (this.cursorIndex !== null) return this.cursorIndex
+    if (this.liveCue === null) return null
+    const i = this.cues.findIndex((c) => c.number === this.liveCue)
+    return i >= 0 ? i : null
+  }
+
+  private cursorOffset(): number {
+    const pos = this.cursorPos()
+    const live = this.liveCue === null ? -1 : this.cues.findIndex((c) => c.number === this.liveCue)
+    return pos === null || live < 0 ? 0 : pos - live
+  }
+
+  private stepCursor(delta: number): void {
+    if (this.cues.length === 0) return
+    const pos = this.cursorPos()
+    const next = pos === null ? (delta > 0 ? 0 : this.cues.length - 1) : clamp(pos + delta, this.cues.length)
+    this.cursorIndex = next
+    this.publishCursor()
+  }
+
+  private resetCursor(): void {
+    this.cursorIndex = null
+    this.publishCursor()
+  }
+
+  /** The cue a New note should land on: the cursor if the desk is connected, else the live cue. */
+  cursorCue(): EosCue | null {
+    const pos = this.cursorPos()
+    if (pos !== null && this.cues[pos]) return this.cues[pos]
+    return this.liveCue !== null ? { number: this.liveCue, label: '' } : null
+  }
+
+  private publishCursor(): void {
+    const c = this.cursorCue()
+    this.setVariableValues({
+      cue_live: this.liveCue ?? '',
+      cue_cursor: c?.number ?? '',
+      cue_cursor_label: c?.label ?? '',
+      cue_cursor_offset: String(this.cursorOffset()),
+    })
+    this.checkFeedbacks('cursor_off_live')
+  }
+
   // ---------------------------------------------------------------- polling
   private async refreshMe(): Promise<void> {
     try {
@@ -200,14 +294,16 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   // -------------------------------------------------------------- entities
   private defineEntities(): void {
     const label = (this.config?.consoleLabel || 'eos').trim()
-    const cueDefault = `$(${label}:cue_active_num)`
+    const cueDefault = (this.config?.eosHost || '').trim() ? '$(thenoteslist:cue_cursor)' : `$(${label}:cue_active_num)`
     const cueOption = {
       type: 'textinput' as const,
       id: 'cueNumber',
       label: 'Cue number (blank = none)',
       default: cueDefault,
       useVariables: true,
-      tooltip: `Resolved when you press. Default is the console's live cue via the ${label} connection; use $(${label}:cue_pending_num) for the next cue, or type a number.`,
+      tooltip: (this.config?.eosHost || '').trim()
+        ? 'Resolved when you press. Default is the cue cursor ($(thenoteslist:cue_cursor)): the live cue unless you stepped it with the Cue ◀ / ▶ keys. $(thenoteslist:cue_live) is always the live cue.'
+        : `Resolved when you press. Default is the console's live cue via the ${label} connection; use $(${label}:cue_pending_num) for the next cue, or type a number.`,
     }
     const actions: CompanionActionDefinitions = {
       open_note_editor: {
@@ -230,6 +326,22 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
             priority: String(event.options[`priority_${mod}`] ?? '') || undefined,
           })
         },
+      },
+      cue_cursor_prev: {
+        name: 'Cue ◀ (step the note cue back one)',
+        description: 'Moves the cue cursor one cue earlier in the desk\'s list without touching the console. New note lands on the cursor.',
+        options: [],
+        callback: async () => this.stepCursor(-1),
+      },
+      cue_cursor_next: {
+        name: 'Cue ▶ (step the note cue forward one)',
+        options: [],
+        callback: async () => this.stepCursor(1),
+      },
+      cue_cursor_reset: {
+        name: 'Cue = live (snap the cursor back to the running cue)',
+        options: [],
+        callback: async () => this.resetCursor(),
       },
       tab_next_note: {
         name: 'Highlight next note',
@@ -305,6 +417,20 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           return opt?.color ? keyStyle(opt.color) : {}
         },
       },
+      cursor_off_live: {
+        type: 'boolean',
+        name: 'Cue cursor is NOT on the live cue',
+        defaultStyle: { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) },
+        options: [],
+        callback: () => this.cursorOffset() !== 0,
+      },
+      eos_connected: {
+        type: 'boolean',
+        name: 'Eos desk connected (read-only reader)',
+        defaultStyle: { bgcolor: combineRgb(22, 163, 74), color: combineRgb(255, 255, 255) },
+        options: [],
+        callback: () => (this.eos ? this.cues.length > 0 || this.liveCue !== null : false),
+      },
       connected: {
         type: 'boolean',
         name: 'Connected',
@@ -323,6 +449,11 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       { variableId: 'production_name', name: 'Production name' },
       { variableId: 'connected', name: 'Connected (true/false)' },
       { variableId: 'pairing_code', name: 'Pairing code while pairing is in progress (put it on a button)' },
+      { variableId: 'cue_live', name: 'Eos: live cue number (our read-only reader)' },
+      { variableId: 'cue_cursor', name: 'Eos: cue the next note lands on (live, or where you stepped)' },
+      { variableId: 'cue_cursor_label', name: 'Eos: label of the cursor cue' },
+      { variableId: 'cue_cursor_offset', name: 'Eos: cursor offset from live (0 = live)' },
+      { variableId: 'eos_connected', name: 'Eos desk connected (true/false)' },
     ]
 
     this.setActionDefinitions(actions)
@@ -338,6 +469,13 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   private buildPresets(): CompanionPresetDefinitions {
     const presets: CompanionPresetDefinitions = {}
     const label = (this.config?.consoleLabel || 'eos').trim()
+    const useReader = !!(this.config?.eosHost || '').trim()
+    const cueVar = useReader ? '$(thenoteslist:cue_cursor)' : `$(${label}:cue_active_num)`
+    if (useReader) {
+      presets.cue_prev = { type: 'button', category: 'Cue cursor', name: 'Cue ◀', style: { text: '◀ CUE\n$(thenoteslist:cue_cursor)', size: 'auto', bgcolor: combineRgb(30, 30, 30), color: combineRgb(255, 255, 255) }, steps: [{ down: [{ actionId: 'cue_cursor_prev', options: {} }], up: [] }], feedbacks: [{ feedbackId: 'cursor_off_live', options: {} }] }
+      presets.cue_next = { type: 'button', category: 'Cue cursor', name: 'Cue ▶', style: { text: 'CUE ▶\n$(thenoteslist:cue_cursor)', size: 'auto', bgcolor: combineRgb(30, 30, 30), color: combineRgb(255, 255, 255) }, steps: [{ down: [{ actionId: 'cue_cursor_next', options: {} }], up: [] }], feedbacks: [{ feedbackId: 'cursor_off_live', options: {} }] }
+      presets.cue_reset = { type: 'button', category: 'Cue cursor', name: 'Cue = live', style: { text: 'LIVE\n$(thenoteslist:cue_live)', size: 'auto', bgcolor: combineRgb(30, 30, 30), color: combineRgb(255, 255, 255) }, steps: [{ down: [{ actionId: 'cue_cursor_reset', options: {} }], up: [] }], feedbacks: [{ feedbackId: 'eos_connected', options: {} }] }
+    }
     for (const m of MODULES) {
       const types = this.options?.[m.id]?.types ?? []
       for (const t of types) {
@@ -346,13 +484,13 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           type: 'button',
           category: `New note · ${m.label}`,
           name: `${t.label} (${m.label})`,
-          style: { text: `${t.label}\n$(${label}:cue_active_num)`, size: 'auto', ...style },
+          style: { text: `${t.label}\n${cueVar}`, size: 'auto', ...style },
           steps: [
             {
               down: [
                 {
                   actionId: 'open_note_editor',
-                  options: { module: m.id, [`type_${m.id}`]: t.value, [`priority_${m.id}`]: 'medium', cueNumber: `$(${label}:cue_active_num)` },
+                  options: { module: m.id, [`type_${m.id}`]: t.value, [`priority_${m.id}`]: 'medium', cueNumber: cueVar },
                 },
               ],
               up: [],
@@ -418,6 +556,10 @@ function keyStyle(hex: string): { bgcolor: number; color: number } {
   if ([r, g, b].some((n) => Number.isNaN(n))) return { bgcolor: combineRgb(40, 40, 40), color: combineRgb(255, 255, 255) }
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
   return { bgcolor: combineRgb(r, g, b), color: luminance > 0.6 ? combineRgb(0, 0, 0) : combineRgb(255, 255, 255) }
+}
+
+function clamp(i: number, len: number): number {
+  return Math.max(0, Math.min(len - 1, i))
 }
 
 function describe(e: unknown): string {
