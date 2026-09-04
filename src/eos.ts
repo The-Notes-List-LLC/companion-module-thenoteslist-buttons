@@ -57,6 +57,7 @@ export class EosReader {
   private lastPublish = 0
   private wantedByNumber: Set<string> = new Set()
   private subscribed = false
+  private announcedCount = false
   private drainTimer: NodeJS.Timeout | null = null
 
   constructor(
@@ -186,15 +187,8 @@ export class EosReader {
     }
   }
 
-  private seenGetReplies = 0
-
   private onMessage(msg: OscMessage): void {
     const a = msg.address
-    this.ev.log('debug', `Eos ← ${a}`)
-    if (a.startsWith('/eos/out/get/cue/') && this.seenGetReplies < 5) {
-      this.seenGetReplies++
-      this.ev.log('info', `Eos: cue record reply ${a} (${(msg.args ?? []).length} args)`)
-    }
     let m: RegExpMatchArray | null
 
     if ((m = a.match(/^\/eos\/out\/active\/cue\/([\d.]+)\/([\d.]+)$/))) {
@@ -214,10 +208,14 @@ export class EosReader {
       if (m[1] !== String(this.cueList)) return
       const previous = this.count
       this.count = Number(msg.args?.[0]?.value ?? 0)
-      if (previous === 0) this.ev.log('info', `Eos: cue list ${this.cueList} has ${this.count} cues; walking the list in the background (${Math.round((this.count * REQUEST_GAP_MS) / 1000)} s)`)
+      if (previous === 0 && !this.announcedCount) {
+        this.announcedCount = true
+        this.ev.log('info', `Eos: cue list ${this.cueList} has ${this.count} cues; walking the list in the background (${Math.round((this.count * REQUEST_GAP_MS) / 1000)} s)`)
+      }
       else if (previous !== this.count) {
         // Insert/delete: every index after the edit moved. Re-walk the whole list.
         this.ev.log('info', `Eos: cue count changed ${previous} → ${this.count}; re-reading the list`)
+        this.announcedCount = false
         this.byIndex.clear()
       }
       this.ev.onCache(this.cache(), this.count)

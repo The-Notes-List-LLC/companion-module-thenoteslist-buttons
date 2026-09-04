@@ -183,6 +183,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         const changed = num !== this.liveCue
         this.liveCue = num
         if (changed) {
+          const c = this.cues.find((x) => x.number === num)
+          this.log('info', `Live cue ${num}${c?.label ? ` ${c.label}` : ''}`)
           if (this.config.eosKeepOffset && this.cursorIndex !== null) {
             const offset = this.cursorOffset()
             const liveIdx = this.cues.find((c) => c.number === num)?.index
@@ -234,7 +236,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     // Keep the window warm around wherever the cursor goes.
     this.eos?.ensureRange(next - 8, next + 8)
     const hit = this.cues.find((c) => c.index === next)
-    this.log('info', `Cue cursor: step ${delta > 0 ? '▶' : '◀'} from index ${pos} to ${next} → ${hit ? `cue ${hit.number} "${hit.label}"` : 'not cached yet'} (live ${this.liveCue ?? 'unknown'} @ index ${this.liveIndex() ?? '?'}, cache ${this.cues.length}/${this.cueCount})`)
+    this.log('info', `Note cue → ${hit ? `${hit.number} ${hit.label}`.trim() : `index ${next} (loading)`}`)
     this.publishCursor()
   }
 
@@ -253,7 +255,6 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
   private publishCursor(): void {
     const c = this.cursorCue()
-    this.log('debug', `Cue cursor publish: live=${this.liveCue ?? 'null'} cursorIndex=${this.cursorIndex ?? 'null'} → ${c ? c.number : 'null'}`)
     const live = this.liveCue === null ? undefined : this.cues.find((x) => x.number === this.liveCue)
     this.setVariableValues({
       cue_live: this.liveCue ?? '',
