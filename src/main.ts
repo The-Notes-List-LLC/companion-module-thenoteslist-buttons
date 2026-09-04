@@ -49,7 +49,10 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   // Cue cursor (#907): the desk's list in sheet order, the live cue, and where
   // the operator has stepped to. Cursor index is relative to `cues`.
   private eos: EosReader | null = null
-  private cues: EosCue[] = [] // the warm window, sorted by sheet index
+  /** Live view of the reader's cache (sheet order); never a stale snapshot. */
+  private get cues(): EosCue[] {
+    return this.eos?.cache() ?? []
+  }
   private cueCount = 0
   private liveCue: string | null = null
   /** Sheet index the operator stepped to; null = follow live. */
@@ -195,8 +198,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         }
         this.publishCursor()
       },
-      onCache: (cues, count) => {
-        this.cues = cues
+      onCache: (_cues, count) => {
         this.cueCount = count
         this.publishCursor()
       },
@@ -225,9 +227,9 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   private stepCursor(delta: number): void {
     const pos = this.cursorPos()
     if (pos === null) {
-      this.log('warn', this.liveCue === null
-        ? 'Cue cursor: the desk has not reported a live cue yet (fire a cue, or check the Eos connection).'
-        : `Cue cursor: live cue ${this.liveCue} is not in the cache yet; try again in a second.`)
+      this.log('info', this.liveCue === null
+        ? 'Note cue: the desk has not reported a live cue yet (fire a cue, or check the Eos connection).'
+        : `Note cue: live cue ${this.liveCue} is not in the cache yet (${this.cues.length}/${this.cueCount} cached); try again in a moment.`)
       return
     }
     const max = this.cueCount > 0 ? this.cueCount - 1 : Number.MAX_SAFE_INTEGER

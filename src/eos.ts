@@ -55,6 +55,7 @@ export class EosReader {
   private background: string[] = [] // low priority: the full-list walk
   private queued: Set<string> = new Set()
   private lastPublish = 0
+  private publishTimer: NodeJS.Timeout | null = null
   private wantedByNumber: Set<string> = new Set()
   private subscribed = false
   private announcedCount = false
@@ -76,6 +77,7 @@ export class EosReader {
     this.closed = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.drainTimer) clearTimeout(this.drainTimer)
+    if (this.publishTimer) clearTimeout(this.publishTimer)
     try { this.socket?.close() } catch { /* already closed */ }
     this.socket = null
     this.connected = false
@@ -241,6 +243,13 @@ export class EosReader {
           if (complete) {
             this.ev.log('info', `Eos: cue list walk complete — ${this.byIndex.size} of ${this.count} cues cached`)
           }
+        } else if (!this.publishTimer) {
+          // Trailing flush so the LAST record of a burst is never left unpublished.
+          this.publishTimer = setTimeout(() => {
+            this.publishTimer = null
+            this.lastPublish = Date.now()
+            this.ev.onCache(this.cache(), this.count)
+          }, 500)
         }
       }
       return
