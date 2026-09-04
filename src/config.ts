@@ -36,22 +36,21 @@ export function getConfigFields(view: PairingView = { code: null, expiresAt: nul
       ? `<b>Paired</b> as "${view.stationName}" on ${view.productionName || 'the production'}. Tick "Start pairing" to pair a different show.`
       : 'Not paired yet. Tick "Start pairing" below, save, then reopen this window to see the code.'
   return [
-    { type: 'static-text', id: 'pairing_state', width: 12, label: view.code ? 'PAIRING CODE' : 'Status', value: banner },
-    {
-      type: 'static-text',
-      id: 'info',
-      width: 12,
-      label: 'How pairing works',
-      value:
-        'Tick "Start pairing" and save. The connection status shows a 6-character code. In The Notes List open the show → Settings → Button stations, type the code, press Pair. The token arrives here automatically.',
-    },
-    { type: 'textinput', id: 'baseUrl', label: 'Base URL', width: 8, default: DEFAULT_BASE_URL },
+    // --- The Notes List -------------------------------------------------------
+    { type: 'static-text', id: 'section_app', width: 12, label: 'The Notes List', value: 'Where this station talks to. Use the live site unless you are testing a beta build.' },
+    { type: 'textinput', id: 'baseUrl', label: 'Base URL', width: 12, default: DEFAULT_BASE_URL },
+
+    // --- Pairing ----------------------------------------------------------------
+    { type: 'static-text', id: 'pairing_state', width: 12, label: view.code ? 'PAIRING CODE' : 'Pairing', value: banner },
     { type: 'checkbox', id: 'startPairing', label: 'Start pairing', width: 4, default: false },
+    { type: 'textinput', id: 'pairingCode', label: 'Pairing code (fills in by itself; type it into the app, then it clears)', width: 8, default: '' },
+    { type: 'static-text', id: 'pairing_help', width: 12, label: '', value: 'Tick Start pairing and save. The code appears above and in the box; in The Notes List open the show → Settings → Button stations, type it, name the station, press Pair. A station belongs to one show; pair again for another.' },
+
+    // --- ETC Eos -----------------------------------------------------------------
     { type: 'static-text', id: 'eos_info', width: 12, label: 'ETC Eos (read-only)', value: 'Enter the desk IP and this module reads the cue list itself: the live cue plus a cursor you can step back and forward with keys, so a late press still lands on the right cue. It never sends commands to the desk. Cue number boxes on keys stay variable-aware, so any Companion variable can still be typed there by hand.' },
     { type: 'textinput', id: 'eosHost', label: 'Eos desk IP', width: 5, default: '' },
     { type: 'checkbox', id: 'eosUseSlip', label: 'Use TCP SLIP (port 3037, Eos 3.1+)', width: 4, default: false },
     { type: 'number', id: 'eosCueList', label: 'Cue list', width: 3, default: 1, min: 1, max: 999 },
     { type: 'checkbox', id: 'eosKeepOffset', label: 'Keep cursor offset when the desk fires the next cue', width: 12, default: false },
-    { type: 'textinput', id: 'pairingCode', label: 'Pairing code (appears here while pairing; type it into the app, then it clears itself)', width: 12, default: '' },
   ]
 }
