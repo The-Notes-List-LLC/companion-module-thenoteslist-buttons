@@ -105,11 +105,12 @@ export class EosReader {
   reloadList(): void {
     this.byIndex.clear()
     this.background = []
+    this.walkAnnounced = false
+    this.walkRetried = false
     this.enqueue(`/eos/get/cue/${this.cueList}/count`)
   }
 
   private walkAll(): void {
-    this.walkAnnounced = false
     this.background = []
     for (let i = 0; i < this.count; i++) {
       const address = `/eos/get/cue/${this.cueList}/index/${i}`
@@ -204,7 +205,9 @@ export class EosReader {
       return
     }
     this.walkAnnounced = true
-    this.ev.log('info', `Eos: cue list walk complete — ${this.byIndex.size} of ${this.count} cues cached${missing.length ? ` (${missing.length} unanswered)` : ''}`)
+    const baseCues = [...this.byIndex.values()].filter((c) => c.part === 0).length
+    const parts = this.byIndex.size - baseCues
+    this.ev.log('info', `Eos: cue list walk complete — ${baseCues} cues cached${parts ? ` (+${parts} parts)` : ''}${missing.length ? `, ${missing.length} unanswered` : ''}`)
     this.ev.onCache(this.cache(), this.count)
   }
 
@@ -244,6 +247,7 @@ export class EosReader {
         // Insert/delete: every index after the edit moved. Re-walk the whole list.
         this.ev.log('info', `Eos: cue count changed ${previous} → ${this.count}; re-reading the list`)
         this.announcedCount = false
+        this.walkAnnounced = false
         this.byIndex.clear()
       }
       this.ev.onCache(this.cache(), this.count)
