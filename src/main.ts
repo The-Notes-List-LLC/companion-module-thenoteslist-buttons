@@ -49,8 +49,10 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   // Cue cursor (#907): the desk's list in sheet order, the live cue, and where
   // the operator has stepped to. Cursor index is relative to `cues`.
   private eos: EosReader | null = null
-  private cues: EosCue[] = []
+  private cues: EosCue[] = [] // the warm window, sorted by sheet index
+  private cueCount = 0
   private liveCue: string | null = null
+  /** Sheet index the operator stepped to; null = follow live. */
   private cursorIndex: number | null = null
 
   async init(config: ModuleConfig): Promise<void> {
@@ -182,20 +184,18 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         this.liveCue = num
         if (changed) {
           if (this.config.eosKeepOffset && this.cursorIndex !== null) {
-            const liveIdx = this.cues.findIndex((c) => c.number === num)
             const offset = this.cursorOffset()
-            this.cursorIndex = liveIdx >= 0 ? clamp(liveIdx + offset, this.cues.length) : null
+            const liveIdx = this.cues.find((c) => c.number === num)?.index
+            this.cursorIndex = liveIdx !== undefined ? Math.max(0, liveIdx + offset) : null
           } else {
             this.cursorIndex = null // follow live
           }
         }
         this.publishCursor()
       },
-      onList: (cues) => {
-        const cursorCue = this.cursorIndex !== null ? this.cues[this.cursorIndex]?.number : undefined
+      onCache: (cues, count) => {
         this.cues = cues
-        // Keep a stepped cursor on the same cue number across a re-read.
-        this.cursorIndex = cursorCue ? (cues.findIndex((c) => c.number === cursorCue) >= 0 ? cues.findIndex((c) => c.number === cursorCue) : null) : null
+        this.cueCount = count
         this.publishCursor()
       },
       log: (level, msg) => this.log(level, msg),
@@ -203,25 +203,31 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.eos.start()
   }
 
-  /** Where the cursor points: an explicit index, else the live cue's index. */
-  private cursorPos(): number | null {
-    if (this.cursorIndex !== null) return this.cursorIndex
+  private liveIndex(): number | null {
     if (this.liveCue === null) return null
-    const i = this.cues.findIndex((c) => c.number === this.liveCue)
-    return i >= 0 ? i : null
+    const c = this.cues.find((x) => x.number === this.liveCue)
+    return c ? c.index : null
+  }
+
+  /** Sheet index the cursor points at: stepped, else live. */
+  private cursorPos(): number | null {
+    return this.cursorIndex !== null ? this.cursorIndex : this.liveIndex()
   }
 
   private cursorOffset(): number {
     const pos = this.cursorPos()
-    const live = this.liveCue === null ? -1 : this.cues.findIndex((c) => c.number === this.liveCue)
-    return pos === null || live < 0 ? 0 : pos - live
+    const live = this.liveIndex()
+    return pos === null || live === null ? 0 : pos - live
   }
 
   private stepCursor(delta: number): void {
-    if (this.cues.length === 0) return
     const pos = this.cursorPos()
-    const next = pos === null ? (delta > 0 ? 0 : this.cues.length - 1) : clamp(pos + delta, this.cues.length)
+    if (pos === null) return // desk has not told us the live cue yet
+    const max = this.cueCount > 0 ? this.cueCount - 1 : Number.MAX_SAFE_INTEGER
+    const next = Math.max(0, Math.min(max, pos + delta))
     this.cursorIndex = next
+    // Keep the window warm around wherever the cursor goes.
+    this.eos?.ensureRange(next - 8, next + 8)
     this.publishCursor()
   }
 
@@ -230,16 +236,17 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.publishCursor()
   }
 
-  /** The cue a New note should land on: the cursor if the desk is connected, else the live cue. */
+  /** The cue a New note should land on: the cursor's cue if cached, else the live cue. */
   cursorCue(): EosCue | null {
     const pos = this.cursorPos()
-    if (pos !== null && this.cues[pos]) return this.cues[pos]
-    return this.liveCue !== null ? { number: this.liveCue, label: '' } : null
+    const hit = pos === null ? undefined : this.cues.find((c) => c.index === pos)
+    if (hit) return hit
+    return this.liveCue !== null ? { number: this.liveCue, label: '', index: -1 } : null
   }
 
   private publishCursor(): void {
     const c = this.cursorCue()
-    const live = this.liveCue === null ? null : this.cues.find((x) => x.number === this.liveCue)
+    const live = this.liveCue === null ? undefined : this.cues.find((x) => x.number === this.liveCue)
     this.setVariableValues({
       cue_live: this.liveCue ?? '',
       cue_live_label: live?.label ?? '',
@@ -453,7 +460,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       { variableId: 'cue_live_label', name: 'Eos: label of the live cue' },
       { variableId: 'cue_cursor', name: 'Eos: cue the next note lands on (live, or where you stepped)' },
       { variableId: 'cue_cursor_label', name: 'Eos: label of the cursor cue' },
-      { variableId: 'cue_cursor_offset', name: 'Eos: cursor offset from live (0 = live)' },
+      { variableId: 'cue_cursor_offset', name: 'Eos: cursor offset from live (0 = live; the window fetches on demand)' },
       { variableId: 'eos_connected', name: 'Eos desk connected (true/false)' },
     ]
 
@@ -558,10 +565,6 @@ function keyStyle(hex: string): { bgcolor: number; color: number } {
   if ([r, g, b].some((n) => Number.isNaN(n))) return { bgcolor: combineRgb(40, 40, 40), color: combineRgb(255, 255, 255) }
   const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
   return { bgcolor: combineRgb(r, g, b), color: luminance > 0.6 ? combineRgb(0, 0, 0) : combineRgb(255, 255, 255) }
-}
-
-function clamp(i: number, len: number): number {
-  return Math.max(0, Math.min(len - 1, i))
 }
 
 function describe(e: unknown): string {

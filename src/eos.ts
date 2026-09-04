@@ -1,18 +1,19 @@
 /**
- * Read-only ETC Eos reader (#907 cue cursor).
+ * Read-only ETC Eos reader (#907 cue cursor), sliding-window edition.
  *
- * Opens its own OSC TCP connection to the desk, subscribes, reads the chosen
- * cue list in sheet order (`/eos/get/cue/<list>/count` then one
- * `/eos/get/cue/<list>/index/<i>` per cue), and follows the live cue via
- * `/eos/out/active/cue/<list>/<num>`. Edits on the desk arrive as
- * `/eos/out/notify/cue/<list>/...` and trigger a debounced re-read.
+ * Opens its own OSC TCP connection to the desk and follows the live cue via
+ * implicit output (`/eos/out/active/cue/<list>/<num>`). It never reads the whole
+ * cue list: when the live cue changes it asks for THAT cue by number
+ * (`/eos/get/cue/<list>/<num>`), learns the cue's index from the reply address
+ * (`/eos/out/get/cue/<list>/<num>/<part>/list/<index>/<count>`), then fetches a
+ * small window of neighbours by index, spaced out. Stepping past the window's
+ * edge fetches a little more. No `/eos/subscribe`: that streams every wheel and
+ * channel change and was the lag on a 1700-cue show.
  *
- * It NEVER sends a command that changes console state: no /eos/key, no
- * /eos/cmd, no /eos/cue fire. (/eos/reset only clears this client's output
- * subscription state on the desk and asks for a resend.) Firing stays with the
- * ETC Eos module if you use one; both can be connected at once.
+ * Never sends a state-changing command: no /eos/key, /eos/cmd, /eos/cue.
+ * `/eos/reset` only clears this client's output state so the desk resends the
+ * current active/pending cue once on connect.
  */
-// `osc` is CommonJS; under Node's ESM loader only the default export is importable.
 import osc from 'osc'
 import type { OscMessage, TCPSocketPort as TCPSocketPortType } from 'osc'
 const { TCPSocketPort } = osc
@@ -20,20 +21,21 @@ const { TCPSocketPort } = osc
 export interface EosCue {
   number: string
   label: string
+  index: number
 }
 
 export interface EosReaderEvents {
   onStatus: (connected: boolean, message: string) => void
   onLive: (cueNumber: string) => void
-  onList: (cues: EosCue[]) => void
+  /** The cache changed: cues known so far, sorted by index. */
+  onCache: (cues: EosCue[], count: number) => void
   log: (level: 'info' | 'warn' | 'error' | 'debug', msg: string) => void
 }
 
 const PORT_OSC10 = 3032
 const PORT_SLIP = 3037
-const BATCH = 40
-const BATCH_GAP_MS = 60
-const NOTIFY_DEBOUNCE_MS = 1000
+const WINDOW = 8 // cues either side of the live cue kept warm
+const REQUEST_GAP_MS = 40 // one request per 40 ms: ~25/s, invisible to the desk
 const RECONNECT_MS = 5000
 
 export class EosReader {
@@ -41,11 +43,11 @@ export class EosReader {
   private connected = false
   private closed = false
   private reconnectTimer: NodeJS.Timeout | null = null
-  private notifyTimer: NodeJS.Timeout | null = null
-  private expectedCount = 0
-  private pending: Map<number, EosCue> = new Map()
-  private settleTimer: NodeJS.Timeout | null = null
-  private publishedSize = 0
+  private count = 0
+  private byIndex: Map<number, EosCue> = new Map()
+  private queue: string[] = []
+  private queued: Set<string> = new Set()
+  private drainTimer: NodeJS.Timeout | null = null
 
   constructor(
     private readonly host: string,
@@ -62,11 +64,24 @@ export class EosReader {
   stop(): void {
     this.closed = true
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
-    if (this.notifyTimer) clearTimeout(this.notifyTimer)
-    if (this.settleTimer) clearTimeout(this.settleTimer)
+    if (this.drainTimer) clearTimeout(this.drainTimer)
     try { this.socket?.close() } catch { /* already closed */ }
     this.socket = null
     this.connected = false
+  }
+
+  /** Cues known so far, in sheet order. */
+  cache(): EosCue[] {
+    return [...this.byIndex.values()].sort((a, b) => a.index - b.index)
+  }
+
+  /** Make sure indexes [from, to] are cached (fetches the missing ones, spaced out). */
+  ensureRange(from: number, to: number): void {
+    const lo = Math.max(0, from)
+    const hi = this.count > 0 ? Math.min(this.count - 1, to) : to
+    for (let i = lo; i <= hi; i++) {
+      if (!this.byIndex.has(i)) this.enqueue(`/eos/get/cue/${this.cueList}/index/${i}`)
+    }
   }
 
   private connect(): void {
@@ -75,13 +90,11 @@ export class EosReader {
     this.socket = socket
     socket.on('ready', () => {
       this.connected = true
+      this.byIndex.clear()
       this.ev.onStatus(true, `Eos ${this.host}:${port}`)
-      this.ev.log('info', `Eos: connected to ${this.host}:${port} (read-only), reading cue list ${this.cueList}`)
-      // /eos/reset resets THIS CLIENT's OSC output state on the desk so it resends
-      // the current active/pending cue at once; it changes nothing on the console.
-      this.send('/eos/reset', [])
-      this.send('/eos/subscribe', [{ type: 'i', value: 1 }])
-      this.readList()
+      this.ev.log('info', `Eos: connected to ${this.host}:${port} (read-only), cue list ${this.cueList}`)
+      this.enqueue('/eos/reset')
+      this.enqueue(`/eos/get/cue/${this.cueList}/count`)
     })
     socket.on('message', (msg) => this.onMessage(msg))
     socket.on('error', (err) => {
@@ -110,82 +123,60 @@ export class EosReader {
     }, RECONNECT_MS)
   }
 
-  private send(address: string, args: Array<{ type: string; value: unknown }>): void {
-    try { this.socket?.send({ address, args }) } catch (e) { this.ev.log('debug', `Eos send failed: ${(e as Error).message}`) }
+  /** Requests go out one at a time, spaced, and never twice while pending. */
+  private enqueue(address: string): void {
+    if (this.queued.has(address)) return
+    this.queued.add(address)
+    this.queue.push(address)
+    if (!this.drainTimer) this.drain()
   }
 
-  /** Read the whole list: count, then every index in small batches. */
-  readList(): void {
-    this.pending = new Map()
-    this.expectedCount = 0
-    this.publishedSize = 0
-    this.send(`/eos/get/cue/${this.cueList}/count`, [])
-  }
-
-  private requestIndexes(count: number): void {
-    let i = 0
-    const tick = () => {
-      const end = Math.min(count, i + BATCH)
-      for (; i < end; i++) this.send(`/eos/get/cue/${this.cueList}/index/${i}`, [])
-      if (i < count) setTimeout(tick, BATCH_GAP_MS)
-    }
-    tick()
-  }
-
-  private publish(final: boolean): void {
-    if (this.pending.size === 0 || (!final && this.pending.size === this.publishedSize)) return
-    const cues = [...this.pending.entries()].sort((x, y) => x[0] - y[0]).map(([, c]) => c)
-    this.publishedSize = cues.length
-    if (final) {
-      if (this.settleTimer) { clearTimeout(this.settleTimer); this.settleTimer = null }
-      const missing = Math.max(0, this.expectedCount - cues.length)
-      this.ev.log('info', `Eos: cached ${cues.length} cues of list ${this.cueList}${missing ? ` (${missing} replies missing; re-reading)` : ''}`)
-      if (missing) setTimeout(() => this.readList(), 3000)
-    }
-    this.ev.onList(cues)
+  private drain(): void {
+    const address = this.queue.shift()
+    if (address === undefined) { this.drainTimer = null; return }
+    this.queued.delete(address)
+    try { this.socket?.send({ address, args: [] }) } catch (e) { this.ev.log('debug', `Eos send failed: ${(e as Error).message}`) }
+    this.drainTimer = setTimeout(() => this.drain(), REQUEST_GAP_MS)
   }
 
   private onMessage(msg: OscMessage): void {
     const a = msg.address
-    this.ev.log('debug', `Eos ← ${a}`)
     let m: RegExpMatchArray | null
 
-    // Live position (implicit output after subscribe).
     if ((m = a.match(/^\/eos\/out\/active\/cue\/([\d.]+)\/([\d.]+)$/))) {
-      if (m[1] === String(this.cueList)) this.ev.onLive(m[2])
+      if (m[1] !== String(this.cueList)) return
+      const num = m[2]
+      this.ev.onLive(num)
+      // Learn this cue's index (the reply carries it), then warm its neighbours.
+      const known = [...this.byIndex.values()].find((c) => c.number === num)
+      if (known) this.ensureRange(known.index - WINDOW, known.index + WINDOW)
+      else this.enqueue(`/eos/get/cue/${this.cueList}/${num}`)
       return
     }
-    // Count reply → request every index.
     if ((m = a.match(/^\/eos\/out\/get\/cue\/([\d.]+)\/count$/))) {
       if (m[1] !== String(this.cueList)) return
-      const n = Number(msg.args?.[0]?.value ?? 0)
-      this.expectedCount = n
-      this.ev.log('info', `Eos: cue list ${this.cueList} has ${n} cues`)
-      if (n === 0) this.ev.onList([])
-      else this.requestIndexes(n)
+      this.count = Number(msg.args?.[0]?.value ?? 0)
+      this.ev.log('info', `Eos: cue list ${this.cueList} has ${this.count} cues (reading a window around the live cue only)`)
+      this.ev.onCache(this.cache(), this.count)
       return
     }
-    // Index reply: /eos/out/get/cue/<list>/<cue>/<part>/list/<index>/<count>
-    // args: 0 index, 1 uid, 2 label, … (31 total). Part 0 is the base cue.
+    // /eos/out/get/cue/<list>/<cue>/<part>/list/<index>/<count>; args[2] = label. Part 0 = base cue.
     if ((m = a.match(/^\/eos\/out\/get\/cue\/([\d.]+)\/([\d.]+)\/(\d+)\/list\/(\d+)\/(\d+)$/))) {
       if (m[1] !== String(this.cueList) || m[3] !== '0') return
       const index = Number(m[4])
-      const label = String(msg.args?.[2]?.value ?? '')
-      this.pending.set(index, { number: m[2], label })
-      // Publish progressively (every 100 replies), and finalise after 1.5 s of
-      // quiet even if a reply went missing — a 1700-cue list must not stall on one.
-      if (this.pending.size % 100 === 0) this.publish(false)
-      if (this.expectedCount > 0 && this.pending.size >= this.expectedCount) this.publish(true)
-      else {
-        if (this.settleTimer) clearTimeout(this.settleTimer)
-        this.settleTimer = setTimeout(() => { this.settleTimer = null; this.publish(true) }, 1500)
+      const cue: EosCue = { number: m[2], label: String(msg.args?.[2]?.value ?? ''), index }
+      const fresh = !this.byIndex.has(index)
+      this.byIndex.set(index, cue)
+      if (fresh) {
+        // First sighting of a live cue by number: warm the window around it.
+        this.ensureRange(index - WINDOW, index + WINDOW)
+        this.ev.onCache(this.cache(), this.count)
       }
       return
     }
-    // Any cue edit on the desk: re-read (debounced) so the cache stays true.
-    if (a.startsWith(`/eos/out/notify/cue/${this.cueList}/`)) {
-      if (this.notifyTimer) clearTimeout(this.notifyTimer)
-      this.notifyTimer = setTimeout(() => { this.notifyTimer = null; this.readList() }, NOTIFY_DEBOUNCE_MS)
+    // A cue edit on the desk (only sent to subscribers; harmless if it arrives): forget it, re-fetch on demand.
+    if ((m = a.match(/^\/eos\/out\/notify\/cue\/([\d.]+)\//))) {
+      if (m[1] === String(this.cueList)) this.byIndex.clear()
     }
   }
 }
