@@ -5,7 +5,7 @@ Drive one production of [The Notes List](https://thenoteslist.com) from your Com
 ## Pairing
 
 1. Add this connection. Leave **Base URL** as `https://thenoteslist.com` unless you are on beta/alpha.
-2. Tick **Start pairing** and save. Close and reopen the connection's settings: the 6-character code is shown large at the top. It is also in the Log tab, the status text, and the variable `$(thenoteslist:pairing_code)` (drop it on a button to read it off the deck).
+2. Tick **Start pairing** and save. Close and reopen the connection's settings: the 6-character code is shown large at the top. It is also in the Log tab, the status text, and the variable `$(<connection label>:pairing_code)` (drop it on a button to read it off the deck).
 3. In The Notes List, open the show → **Settings** → **Button stations**, type the code, give the station a name, press **Pair**.
 4. Within a few seconds the status turns **OK**. The token is stored in this connection; you never see it.
 
@@ -15,7 +15,7 @@ A station belongs to one production. To move to another show, revoke it in Setti
 
 Enter the desk's IP in **Eos desk IP** (tick **Use TCP SLIP** if the desk uses port 3037 / OSC 1.1; the Eos default is port 3032). Enable OSC RX/TX on the desk under Setup → System → Show Control → OSC. This module then follows the live cue of cue list 1 (change **Cue list** if needed), fetches the cues around it first, and walks the whole list in the background one request at a time (a 1700-cue show takes under a minute and the desk never sees a burst). Once the list is cached it subscribes, so cue edits on the desk (renumber, insert, relabel) update the cache by themselves; the wheel and channel traffic that comes with a subscription is ignored. It never sends a command to the desk. **Eos: reload the cue list** is there if you ever want to force a fresh read.
 
-**Cue cursor.** Notes land on the cursor, which normally rides the live cue. If a press comes late, the keys **Cue ◀** / **Cue ▶** step the cursor back or forward through the cached list without touching the console; **Cue = live** snaps it back. When the desk fires the next cue the cursor returns to live (tick **Keep cursor offset** to hold the offset instead). Key faces: `$(thenoteslist:cue_cursor)` (with `cue_cursor_label`), `$(thenoteslist:cue_live)`; the **Cue cursor is NOT on the live cue** feedback turns a key amber while you are stepped away. Presets under "Cue cursor", including two display-only keys: **Display: live cue** (number + label, green when the desk is connected) and **Display: note cue** (the cursor, amber while stepped away from live).
+**Cue cursor.** Notes land on the cursor, which normally rides the live cue. If a press comes late, the keys **Cue ◀** / **Cue ▶** step the cursor back or forward through the cached list without touching the console; **Cue = live** snaps it back. When the desk fires the next cue the cursor returns to live (tick **Keep cursor offset** to hold the offset instead). Key faces: `$(<connection label>:cue_cursor)` (with `cue_cursor_label`), `$(<connection label>:cue_live)`; the **Cue cursor is NOT on the live cue** feedback turns a key amber while you are stepped away. Presets under "Cue cursor", including two display-only keys: **Display: live cue** (number + label, green when the desk is connected) and **Display: note cue** (the cursor, amber while stepped away from live).
 
 ### Other consoles
 
@@ -44,4 +44,4 @@ Under **Presets** you get one ready-made key per note type of your show ("New no
 
 ## Variables
 
-`$(thenoteslist:cue_outstanding)`, `work_outstanding`, `production_outstanding`, `electrician_outstanding`, `station_name`, `production_name`, `pairing_code`, `connected`.
+`$(<connection label>:cue_outstanding)`, `work_outstanding`, `production_outstanding`, `electrician_outstanding`, `station_name`, `production_name`, `pairing_code`, `connected`.
