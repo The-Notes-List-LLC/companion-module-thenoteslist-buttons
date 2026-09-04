@@ -9,9 +9,12 @@
  * cue changes it asks for THAT cue by number
  * (`/eos/get/cue/<list>/<num>`), learns the cue's index from the reply address
  * (`/eos/out/get/cue/<list>/<num>/<part>/list/<index>/<count>`), then fetches a
- * small window of neighbours by index, spaced out. Stepping past the window's
- * edge fetches a little more. No `/eos/subscribe`: that streams every wheel and
- * channel change and was the lag on a 1700-cue show.
+ * small window of neighbours by index, spaced out. Once the background walk
+ * has the whole list it sends `/eos/subscribe 1`, so edits on the desk arrive
+ * as `/eos/out/notify/cue/<list>/...` and only the named cues are re-fetched
+ * (plus a re-count for inserts/deletes). The wheel/channel stream that
+ * subscribe also brings is simply ignored; the earlier lag came from the burst
+ * of 1700 requests, not from being subscribed.
  *
  * Never sends a state-changing command: no /eos/key, /eos/cmd, /eos/cue.
  * `/eos/reset` only clears this client's output state so the desk resends the
@@ -53,6 +56,7 @@ export class EosReader {
   private queued: Set<string> = new Set()
   private lastPublish = 0
   private wantedByNumber: Set<string> = new Set()
+  private subscribed = false
   private drainTimer: NodeJS.Timeout | null = null
 
   constructor(
@@ -112,6 +116,7 @@ export class EosReader {
     this.socket = socket
     socket.on('ready', () => {
       this.connected = true
+      this.subscribed = false
       this.byIndex.clear()
       this.ev.onStatus(true, `Eos ${this.host}:${port}`)
       this.ev.log('info', `Eos: connected to ${this.host}:${port} (read-only), cue list ${this.cueList}`)
@@ -161,7 +166,8 @@ export class EosReader {
       do { address = this.background.shift() } while (address !== undefined && this.queued.has(address))
     }
     if (address === undefined) { this.drainTimer = null; return }
-    try { this.socket?.send({ address, args: [] }) } catch (e) { this.ev.log('debug', `Eos send failed: ${(e as Error).message}`) }
+    const args = address === '/eos/subscribe' ? [{ type: 'i', value: 1 }] : []
+    try { this.socket?.send({ address, args }) } catch (e) { this.ev.log('debug', `Eos send failed: ${(e as Error).message}`) }
     this.drainTimer = setTimeout(() => this.drain(), REQUEST_GAP_MS)
   }
 
@@ -184,8 +190,14 @@ export class EosReader {
     }
     if ((m = a.match(/^\/eos\/out\/get\/cue\/([\d.]+)\/count$/))) {
       if (m[1] !== String(this.cueList)) return
+      const previous = this.count
       this.count = Number(msg.args?.[0]?.value ?? 0)
-      this.ev.log('info', `Eos: cue list ${this.cueList} has ${this.count} cues; walking the list in the background (${Math.round((this.count * REQUEST_GAP_MS) / 1000)} s)`)
+      if (previous === 0) this.ev.log('info', `Eos: cue list ${this.cueList} has ${this.count} cues; walking the list in the background (${Math.round((this.count * REQUEST_GAP_MS) / 1000)} s)`)
+      else if (previous !== this.count) {
+        // Insert/delete: every index after the edit moved. Re-walk the whole list.
+        this.ev.log('info', `Eos: cue count changed ${previous} → ${this.count}; re-reading the list`)
+        this.byIndex.clear()
+      }
       this.ev.onCache(this.cache(), this.count)
       this.walkAll()
       return
@@ -206,14 +218,29 @@ export class EosReader {
         if (complete || now - this.lastPublish > 500) {
           this.lastPublish = now
           this.ev.onCache(this.cache(), this.count)
-          if (complete) this.ev.log('info', `Eos: full cue list cached (${this.byIndex.size} cues)`)
+          if (complete) {
+            this.ev.log('info', `Eos: full cue list cached (${this.byIndex.size} cues)`)
+            if (!this.subscribed) {
+              // Now that the walk is done, let the desk push cue edits to us.
+              this.subscribed = true
+              this.enqueue('/eos/subscribe')
+              this.ev.log('info', 'Eos: subscribed for cue edits (wheel/channel traffic is ignored)')
+            }
+          }
         }
       }
       return
     }
-    // A cue edit on the desk (only sent to subscribers; harmless if it arrives): forget it, re-fetch on demand.
+    // A cue edit on the desk (subscribers only): re-fetch just the named cues,
+    // and re-count in case cues were inserted or deleted (indexes shift).
     if ((m = a.match(/^\/eos\/out\/notify\/cue\/([\d.]+)\//))) {
-      if (m[1] === String(this.cueList)) this.reloadList()
+      if (m[1] !== String(this.cueList)) return
+      const numbers = (msg.args ?? []).map((x) => String(x.value)).filter((v) => /^[\d.]+$/.test(v))
+      for (const n of numbers) {
+        for (const [idx, c] of this.byIndex) if (c.number === n) this.byIndex.delete(idx)
+        this.enqueue(`/eos/get/cue/${this.cueList}/${n}`)
+      }
+      this.enqueue(`/eos/get/cue/${this.cueList}/count`)
     }
   }
 }
