@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { StationApi, type ApiError } from './api.js'
 import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig } from './config.js'
 import { EosReader, type EosCue } from './eos.js'
+import { MODULE_COLORS, brandedStyle, keyStyle } from './brand.js'
 
 const MODULES = [
   { id: 'cue', label: 'Cue Notes' },
@@ -174,7 +175,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.eos = null
     const host = (this.config.eosHost || '').trim()
     if (!host) {
-      this.setVariableValues({ eos_connected: 'false', cue_live: '', cue_cursor: '', cue_cursor_label: '', cue_cursor_offset: '0' })
+      this.setVariableValues({ eos_connected: 'false', cue_live: '', selected_cue: '', selected_cue_label: '', selected_cue_offset: '0' })
       return
     }
     this.eos = new EosReader(host, !!this.config.eosUseSlip, Number(this.config.eosCueList) || 1, {
@@ -228,8 +229,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     const pos = this.cursorPos()
     if (pos === null) {
       this.log('info', this.liveCue === null
-        ? 'Note cue: the desk has not reported a live cue yet (fire a cue, or check the Eos connection).'
-        : `Note cue: live cue ${this.liveCue} is not in the cache yet (${this.cues.length}/${this.cueCount} cached); try again in a moment.`)
+        ? 'Selected cue: the desk has not reported a live cue yet (fire a cue, or check the Eos connection).'
+        : `Selected cue: live cue ${this.liveCue} is not in the cache yet (${this.cues.length}/${this.cueCount} cached); try again in a moment.`)
       return
     }
     const max = this.cueCount > 0 ? this.cueCount - 1 : Number.MAX_SAFE_INTEGER
@@ -240,7 +241,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     // Keep the window warm around wherever the cursor goes.
     this.eos?.ensureRange(next - 8, next + 8)
     const hit = this.cues.find((c) => c.index === next)
-    this.log('info', `Note cue → ${hit ? `${hit.number} ${hit.label}`.trim() : `index ${next} (loading)`}`)
+    this.log('info', `Selected cue → ${hit ? `${hit.number} ${hit.label}`.trim() : `index ${next} (loading)`}`)
     this.publishCursor()
   }
 
@@ -263,11 +264,11 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.setVariableValues({
       cue_live: this.liveCue ?? '',
       cue_live_label: live?.label ?? '',
-      cue_cursor: c?.number ?? '',
-      cue_cursor_label: c?.label ?? '',
-      cue_cursor_offset: String(this.cursorOffset()),
+      selected_cue: c?.number ?? '',
+      selected_cue_label: c?.label ?? '',
+      selected_cue_offset: String(this.cursorOffset()),
     })
-    this.checkFeedbacks('cursor_off_live')
+    this.checkFeedbacks('selected_cue_off_live')
   }
 
   // ---------------------------------------------------------------- polling
@@ -316,14 +317,14 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
   // -------------------------------------------------------------- entities
   private defineEntities(): void {
-    const cueDefault = `$(${this.label}:cue_cursor)`
+    const cueDefault = `$(${this.label}:selected_cue)`
     const cueOption = {
       type: 'textinput' as const,
       id: 'cueNumber',
       label: 'Cue number (blank = none)',
       default: cueDefault,
       useVariables: true,
-      tooltip: `Resolved when you press. Default is the cue cursor ($(${this.label}:cue_cursor)): the live cue unless you stepped it with the Cue ◀ / ▶ keys. $(${this.label}:cue_live) is always the live cue. Any other variable or a typed number also works.`,
+      tooltip: `Resolved when you press. Default is the cue cursor ($(${this.label}:selected_cue)): the live cue unless you stepped it with the Selected cue ◀ / ▶ keys. $(${this.label}:cue_live) is always the live cue. Any other variable or a typed number also works.`,
     }
     const actions: CompanionActionDefinitions = {
       open_note_editor: {
@@ -348,14 +349,14 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           })
         },
       },
-      cue_cursor_prev: {
-        name: 'Cue ◀ (step the note cue back one)',
-        description: 'Moves the cue cursor one cue earlier in the desk\'s list without touching the console. New note lands on the cursor.',
+      selected_cue_prev: {
+        name: 'Selected cue ◀ (one cue earlier)',
+        description: 'Moves the selected cue one earlier in the desk\'s list without touching the console. New note lands on the selected cue.',
         options: [],
         callback: async () => this.stepCursor(-1),
       },
-      cue_cursor_next: {
-        name: 'Cue ▶ (step the note cue forward one)',
+      selected_cue_next: {
+        name: 'Selected cue ▶ (one cue later)',
         options: [],
         callback: async () => this.stepCursor(1),
       },
@@ -364,8 +365,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         options: [],
         callback: async () => this.eos?.reloadList(),
       },
-      cue_cursor_reset: {
-        name: 'Cue = live (snap the cursor back to the running cue)',
+      selected_cue_live: {
+        name: 'Selected cue = live (follow the running cue again)',
         options: [],
         callback: async () => this.resetCursor(),
       },
@@ -443,9 +444,9 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           return opt?.color ? keyStyle(opt.color) : {}
         },
       },
-      cursor_off_live: {
+      selected_cue_off_live: {
         type: 'boolean',
-        name: 'Cue cursor is NOT on the live cue',
+        name: 'Selected cue is not the live cue',
         defaultStyle: { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) },
         options: [],
         callback: () => this.cursorOffset() !== 0,
@@ -477,9 +478,9 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       { variableId: 'pairing_code', name: 'Pairing code while pairing is in progress (put it on a button)' },
       { variableId: 'cue_live', name: 'Eos: live cue number (our read-only reader)' },
       { variableId: 'cue_live_label', name: 'Eos: label of the live cue' },
-      { variableId: 'cue_cursor', name: 'Eos: cue the next note lands on (live, or where you stepped)' },
-      { variableId: 'cue_cursor_label', name: 'Eos: label of the cursor cue' },
-      { variableId: 'cue_cursor_offset', name: 'Eos: cursor offset from live (0 = live; the window fetches on demand)' },
+      { variableId: 'selected_cue', name: 'Selected cue: the cue the next note lands on (live unless you stepped)' },
+      { variableId: 'selected_cue_label', name: 'Selected cue label' },
+      { variableId: 'selected_cue_offset', name: 'Selected cue offset from live (0 = live)' },
       { variableId: 'eos_connected', name: 'Eos desk connected (true/false)' },
     ]
 
@@ -493,41 +494,48 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
    * One ready-made key per module × type from THIS show: the New note action
    * with that type, the matching chip colour, and the live cue on the face.
    */
+  /**
+   * Ready-made keys in the house look (N mark top-left, text right-aligned):
+   *  - New note · <Module>: one per type of THIS show, coloured like the chip
+   *  - Go to module: one per module, module colour
+   *  - Selected cue: ◀ / ▶ / = live and two display keys
+   */
   private buildPresets(): CompanionPresetDefinitions {
     const presets: CompanionPresetDefinitions = {}
-    const cueVar = `$(${this.label}:cue_cursor)`
-    {
-      presets.cue_prev = { type: 'button', category: 'Cue cursor', name: 'Cue ◀', style: { text: `◀ CUE\n$(${this.label}:cue_cursor)`, size: 'auto', bgcolor: combineRgb(30, 30, 30), color: combineRgb(255, 255, 255) }, steps: [{ down: [{ actionId: 'cue_cursor_prev', options: {} }], up: [] }], feedbacks: [{ feedbackId: 'cursor_off_live', options: {}, style: { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) } }] }
-      presets.cue_next = { type: 'button', category: 'Cue cursor', name: 'Cue ▶', style: { text: `CUE ▶\n$(${this.label}:cue_cursor)`, size: 'auto', bgcolor: combineRgb(30, 30, 30), color: combineRgb(255, 255, 255) }, steps: [{ down: [{ actionId: 'cue_cursor_next', options: {} }], up: [] }], feedbacks: [{ feedbackId: 'cursor_off_live', options: {}, style: { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) } }] }
-      // Display-only keys: no action, just the numbers, large.
-      presets.display_live = { type: 'button', category: 'Cue cursor', name: 'Display: live cue', style: { text: `LIVE\n$(${this.label}:cue_live)\n$(${this.label}:cue_live_label)`, size: 'auto', bgcolor: combineRgb(0, 0, 0), color: combineRgb(255, 255, 255) }, steps: [{ down: [], up: [] }], feedbacks: [{ feedbackId: 'eos_connected', options: {}, style: { color: combineRgb(255, 255, 255), bgcolor: combineRgb(0, 70, 0) } }] }
-      presets.display_cursor = { type: 'button', category: 'Cue cursor', name: 'Display: note cue (cursor)', style: { text: `NOTE CUE\n$(${this.label}:cue_cursor)\n$(${this.label}:cue_cursor_label)`, size: 'auto', bgcolor: combineRgb(0, 0, 0), color: combineRgb(255, 255, 255) }, steps: [{ down: [], up: [] }], feedbacks: [{ feedbackId: 'cursor_off_live', options: {}, style: { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) } }] }
-      presets.cue_reset = { type: 'button', category: 'Cue cursor', name: 'Cue = live', style: { text: `LIVE\n$(${this.label}:cue_live)`, size: 'auto', bgcolor: combineRgb(30, 30, 30), color: combineRgb(255, 255, 255) }, steps: [{ down: [{ actionId: 'cue_cursor_reset', options: {} }], up: [] }], feedbacks: [{ feedbackId: 'eos_connected', options: {}, style: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) } }] }
-    }
+    const L = this.label
+    const cueVar = `$(${L}:selected_cue)`
+    const short = (label: string) => (label.length > 10 ? label.split(/\s+/).map((w) => w[0]).join('').toUpperCase() : label.toUpperCase())
+
     for (const m of MODULES) {
       const types = this.options?.[m.id]?.types ?? []
       for (const t of types) {
-        const style = t.color ? keyStyle(t.color) : { bgcolor: combineRgb(40, 40, 40), color: combineRgb(255, 255, 255) }
         presets[`new_${m.id}_${t.value}`] = {
           type: 'button',
           category: `New note · ${m.label}`,
           name: `${t.label} (${m.label})`,
-          style: { text: `${t.label}\n${cueVar}`, size: 'auto', ...style },
-          steps: [
-            {
-              down: [
-                {
-                  actionId: 'open_note_editor',
-                  options: { module: m.id, [`type_${m.id}`]: t.value, [`priority_${m.id}`]: 'medium', cueNumber: cueVar },
-                },
-              ],
-              up: [],
-            },
-          ],
-          feedbacks: [{ feedbackId: 'type_color', options: { module: m.id, [`type_${m.id}`]: t.value } }],
+          style: brandedStyle(`ADD\n${short(t.label)}\nNOTE`, t.color ?? MODULE_COLORS[m.id], 18),
+          steps: [{ down: [{ actionId: 'open_note_editor', options: { module: m.id, [`type_${m.id}`]: t.value, [`priority_${m.id}`]: 'medium', cueNumber: cueVar } }], up: [] }],
+          feedbacks: [],
         }
       }
+      presets[`goto_${m.id}`] = {
+        type: 'button',
+        category: 'Go to module',
+        name: `Go to ${m.label}`,
+        style: brandedStyle(`GO TO\n${m.label.replace(' Notes', '').toUpperCase()}\nNOTES`, MODULE_COLORS[m.id], 18),
+        steps: [{ down: [{ actionId: 'tab_jump_module', options: { module: m.id } }], up: [] }],
+        feedbacks: [],
+      }
     }
+
+    const dark = '#1f1f1f'
+    const amber = { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) }
+    const offLive = { feedbackId: 'selected_cue_off_live', options: {}, style: amber }
+    presets.selected_prev = { type: 'button', category: 'Selected cue', name: 'Selected cue ◀', style: brandedStyle(`◀\n${cueVar}`, dark, 18), steps: [{ down: [{ actionId: 'selected_cue_prev', options: {} }], up: [] }], feedbacks: [offLive] }
+    presets.selected_next = { type: 'button', category: 'Selected cue', name: 'Selected cue ▶', style: brandedStyle(`▶\n${cueVar}`, dark, 18), steps: [{ down: [{ actionId: 'selected_cue_next', options: {} }], up: [] }], feedbacks: [offLive] }
+    presets.selected_live = { type: 'button', category: 'Selected cue', name: 'Selected cue = live', style: brandedStyle(`LIVE\n$(${L}:cue_live)`, dark, 18), steps: [{ down: [{ actionId: 'selected_cue_live', options: {} }], up: [] }], feedbacks: [{ feedbackId: 'eos_connected', options: {}, style: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) } }] }
+    presets.display_live = { type: 'button', category: 'Selected cue', name: 'Display: live cue', style: brandedStyle(`LIVE\n$(${L}:cue_live)\n$(${L}:cue_live_label)`, '#000000'), steps: [{ down: [], up: [] }], feedbacks: [{ feedbackId: 'eos_connected', options: {}, style: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) } }] }
+    presets.display_selected = { type: 'button', category: 'Selected cue', name: 'Display: selected cue', style: brandedStyle(`SELECTED\n${cueVar}\n$(${L}:selected_cue_label)`, '#000000'), steps: [{ down: [], up: [] }], feedbacks: [offLive] }
     return presets
   }
 
@@ -574,16 +582,6 @@ function perModuleChoices(
       isVisibleData: { module: m.id },
     }
   })
-}
-
-/** Background = the chip colour; text white or black by luminance so it stays readable. */
-function keyStyle(hex: string): { bgcolor: number; color: number } {
-  const h = hex.replace('#', '')
-  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
-  const r = parseInt(full.slice(0, 2), 16), g = parseInt(full.slice(2, 4), 16), b = parseInt(full.slice(4, 6), 16)
-  if ([r, g, b].some((n) => Number.isNaN(n))) return { bgcolor: combineRgb(40, 40, 40), color: combineRgb(255, 255, 255) }
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-  return { bgcolor: combineRgb(r, g, b), color: luminance > 0.6 ? combineRgb(0, 0, 0) : combineRgb(255, 255, 255) }
 }
 
 function describe(e: unknown): string {

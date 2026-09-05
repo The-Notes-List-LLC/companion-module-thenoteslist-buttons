@@ -15,7 +15,7 @@ A station belongs to one production. To move to another show, revoke it in Setti
 
 Enter the desk's IP in **Eos desk IP** (tick **Use TCP SLIP** if the desk uses port 3037 / OSC 1.1; the Eos default is port 3032). Enable OSC RX/TX on the desk under Setup → System → Show Control → OSC. This module then follows the live cue of cue list 1 (change **Cue list** if needed), fetches the cues around it first, and walks the whole list in the background one request at a time (a 1700-cue show takes under a minute and the desk never sees a burst). Once the list is cached it subscribes, so cue edits on the desk (renumber, insert, relabel) update the cache by themselves; the wheel and channel traffic that comes with a subscription is ignored. It never sends a command to the desk. **Eos: reload the cue list** is there if you ever want to force a fresh read.
 
-**Cue cursor.** Notes land on the cursor, which normally rides the live cue. If a press comes late, the keys **Cue ◀** / **Cue ▶** step the cursor back or forward through the cached list without touching the console; **Cue = live** snaps it back. When the desk fires the next cue the cursor returns to live (tick **Keep cursor offset** to hold the offset instead). Key faces: `$(<connection label>:cue_cursor)` (with `cue_cursor_label`), `$(<connection label>:cue_live)`; the **Cue cursor is NOT on the live cue** feedback turns a key amber while you are stepped away. Presets under "Cue cursor", including two display-only keys: **Display: live cue** (number + label, green when the desk is connected) and **Display: note cue** (the cursor, amber while stepped away from live).
+**Selected cue.** Notes land on the selected cue, which normally follows the live cue. If a press comes late, **Selected cue ◀** / **▶** move the selection back or forward through the cached list without touching the console; **Selected cue = live** follows the running cue again. When the desk fires the next cue the selection returns to live (tick **Keep cursor offset** to hold the offset instead). Key faces: `$(<connection label>:selected_cue)` (with `selected_cue_label`), `$(<connection label>:cue_live)`; the **Selected cue is not the live cue** feedback turns a key amber while stepped. Presets under "Selected cue" include two display-only keys (live cue, selected cue).
 
 ### Other consoles
 
@@ -33,7 +33,7 @@ Everything acts on **your own open browser tab** of The Notes List, on the page 
 
 ## Presets
 
-Under **Presets** you get one ready-made key per note type of your show ("New note · Cue Notes" → Cue, Director, Stage Manager…): the editor action with that type, the key coloured like the chip in the app, and the console's live cue on the face. Drag them onto the deck.
+Under **Presets**: one key per note type of your show ("New note · Cue Notes" → ADD CUE NOTE, ADD SM NOTE…) in the house look (N mark, chip colour), a **Go to module** key per module, and the **Selected cue** keys. Drag them onto the deck.
 
 ## Feedbacks
 
