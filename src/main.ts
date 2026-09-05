@@ -504,10 +504,19 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     const presets: CompanionPresetDefinitions = {}
     const L = this.label
     const cueVar = `$(${L}:selected_cue)`
-    // Two-word labels become initials (Stage Manager → SM); one long word stays whole and auto-sizes.
-    const short = (label: string) => {
+    // Key faces have room for ~5 letters beside the N. Known types get the
+    // abbreviation the booth already uses; multi-word customs become initials;
+    // anything else is clipped to 5 letters.
+    const ABBR: Record<string, string> = {
+      cue: 'CUE', director: 'DIR', choreographer: 'CHOR', designer: 'DSGN', stage_manager: 'SM', associate: 'ASSOC',
+      assistant: 'ASST', spot: 'SPOT', programmer: 'PROG', production: 'PROD', paperwork: 'PAPER', think: 'THINK',
+      work: 'WORK', lighting: 'LX', focus: 'FOCUS', electrics: 'ELEC', rigging: 'RIG', sound: 'SND', scenic: 'SET', props: 'PROPS',
+    }
+    const short = (value: string, label: string) => {
+      if (ABBR[value]) return ABBR[value]
       const words = label.trim().split(/\s+/)
-      return (words.length > 1 ? words.map((w) => w[0]).join('') : label).toUpperCase()
+      if (words.length > 1) return words.map((w) => w[0]).join('').toUpperCase()
+      return label.toUpperCase().slice(0, 5)
     }
 
     for (const m of MODULES) {
@@ -517,7 +526,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           type: 'button',
           category: `New note · ${m.label}`,
           name: `${t.label} (${m.label})`,
-          style: brandedStyle(`ADD\n${short(t.label)}\nNOTE`, t.color ?? MODULE_COLORS[m.id], 'auto'),
+          style: brandedStyle(`ADD\n${short(t.value, t.label)}\nNOTE`, t.color ?? MODULE_COLORS[m.id], 'auto'),
           steps: [{ down: [{ actionId: 'open_note_editor', options: { module: m.id, [`type_${m.id}`]: t.value, [`priority_${m.id}`]: 'medium', cueNumber: cueVar } }], up: [] }],
           feedbacks: [],
         }
@@ -526,7 +535,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         type: 'button',
         category: 'Go to module',
         name: `Go to ${m.label}`,
-        style: brandedStyle(`GO TO\n${m.label.replace(' Notes', '').toUpperCase()}\nNOTES`, MODULE_COLORS[m.id], 'auto'),
+        style: brandedStyle(`GO TO\n${({ cue: 'CUE', work: 'WORK', production: 'PROD', electrician: 'ELEC' } as Record<string, string>)[m.id]}\nNOTES`, MODULE_COLORS[m.id], 'auto'),
         steps: [{ down: [{ actionId: 'tab_jump_module', options: { module: m.id } }], up: [] }],
         feedbacks: [],
       }
