@@ -504,7 +504,11 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     const presets: CompanionPresetDefinitions = {}
     const L = this.label
     const cueVar = `$(${L}:selected_cue)`
-    const short = (label: string) => (label.length > 10 ? label.split(/\s+/).map((w) => w[0]).join('').toUpperCase() : label.toUpperCase())
+    // Two-word labels become initials (Stage Manager → SM); one long word stays whole and auto-sizes.
+    const short = (label: string) => {
+      const words = label.trim().split(/\s+/)
+      return (words.length > 1 ? words.map((w) => w[0]).join('') : label).toUpperCase()
+    }
 
     for (const m of MODULES) {
       const types = this.options?.[m.id]?.types ?? []
@@ -513,7 +517,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           type: 'button',
           category: `New note · ${m.label}`,
           name: `${t.label} (${m.label})`,
-          style: brandedStyle(`ADD\n${short(t.label)}\nNOTE`, t.color ?? MODULE_COLORS[m.id], 18),
+          style: brandedStyle(`ADD\n${short(t.label)}\nNOTE`, t.color ?? MODULE_COLORS[m.id], 'auto'),
           steps: [{ down: [{ actionId: 'open_note_editor', options: { module: m.id, [`type_${m.id}`]: t.value, [`priority_${m.id}`]: 'medium', cueNumber: cueVar } }], up: [] }],
           feedbacks: [],
         }
@@ -522,7 +526,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         type: 'button',
         category: 'Go to module',
         name: `Go to ${m.label}`,
-        style: brandedStyle(`GO TO\n${m.label.replace(' Notes', '').toUpperCase()}\nNOTES`, MODULE_COLORS[m.id], 18),
+        style: brandedStyle(`GO TO\n${m.label.replace(' Notes', '').toUpperCase()}\nNOTES`, MODULE_COLORS[m.id], 'auto'),
         steps: [{ down: [{ actionId: 'tab_jump_module', options: { module: m.id } }], up: [] }],
         feedbacks: [],
       }
