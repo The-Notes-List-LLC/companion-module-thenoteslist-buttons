@@ -45,3 +45,5 @@ Under **Presets**: one key per note type of your show ("New note Â· Cue Notes" â
 ## Variables
 
 `$(<connection label>:cue_outstanding)`, `work_outstanding`, `production_outstanding`, `electrician_outstanding`, `station_name`, `production_name`, `pairing_code`, `connected`.
+
+Eos: `cue_live`, `cue_live_label`, `selected_cue`, `selected_cue_label`, `selected_cue_offset` (0 = live), `eos_connected`.
