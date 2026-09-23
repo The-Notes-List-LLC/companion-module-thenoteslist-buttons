@@ -3,8 +3,11 @@ import type { SomeCompanionConfigField } from '@companion-module/base'
 export interface ModuleConfig {
   baseUrl: string
   startPairing: boolean
-  /** Filled by pairing and kept in the stored config; deliberately NOT a visible field. */
-  token: string
+  /**
+   * Legacy: versions before the secrets store kept the station token here, where
+   * it showed up in config exports. Moved to ModuleSecrets on first run.
+   */
+  token?: string
   stationName: string
   productionName: string
   /** Written by the module while pairing; shown live in the settings window. */
@@ -15,6 +18,12 @@ export interface ModuleConfig {
   eosCueList: number
   /** Keep the cursor's offset from live when the desk fires the next cue (default: snap back to live). */
   eosKeepOffset: boolean
+}
+
+/** Companion's secrets store: never exported with the config, never sent to the web UI. */
+export interface ModuleSecrets {
+  /** Station token, filled by pairing. */
+  token?: string
 }
 
 export const DEFAULT_BASE_URL = 'https://thenoteslist.com'
@@ -43,6 +52,7 @@ export function getConfigFields(view: PairingView = { code: null, expiresAt: nul
     // --- Pairing ----------------------------------------------------------------
     { type: 'static-text', id: 'pairing_state', width: 12, label: view.code ? 'PAIRING CODE' : 'Pairing', value: banner },
     { type: 'checkbox', id: 'startPairing', label: 'Start pairing', width: 4, default: false },
+    { type: 'secret-text', id: 'token', label: 'Station token (filled in by pairing; clear it to unpair this connection)', width: 12, default: '' },
     { type: 'textinput', id: 'pairingCode', label: 'Pairing code (fills in by itself; type it into the app, then it clears)', width: 8, default: '' },
     { type: 'static-text', id: 'pairing_help', width: 12, label: '', value: 'Tick Start pairing and save. The code appears above and in the box; in The Notes List open the show → Settings → Button stations, type it, name the station, press Pair. A station belongs to one show; pair again for another.' },
 

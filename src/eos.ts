@@ -265,11 +265,16 @@ export class EosReader implements CueSheet {
 
   private drain(): void {
     // Window reads first; the background walk only uses idle slots.
-    let address = this.queue.shift()
-    if (address !== undefined) this.queued.delete(address)
-    else {
-      do { address = this.background.shift() } while (address !== undefined && this.queued.has(address))
-    }
+    let address: string | undefined
+    do {
+      address = this.queue.shift()
+      if (address !== undefined) this.queued.delete(address)
+      else {
+        do { address = this.background.shift() } while (address !== undefined && this.queued.has(address))
+      }
+      // The same record can sit in both queues (a window read overtakes the walk):
+      // never ask the desk twice for a cue that has already arrived.
+    } while (address !== undefined && this.isCachedRead(address))
     if (address === undefined) {
       this.drainTimer = null
       this.onQueueIdle()
@@ -278,6 +283,11 @@ export class EosReader implements CueSheet {
     const args = address === '/eos/subscribe' ? [{ type: 'i', value: 1 }] : []
     try { this.socket?.send({ address, args }) } catch (e) { this.ev.log('debug', `Eos send failed: ${(e as Error).message}`) }
     this.drainTimer = setTimeout(() => this.drain(), REQUEST_GAP_MS)
+  }
+
+  private isCachedRead(address: string): boolean {
+    const m = address.match(/\/index\/(\d+)$/)
+    return m !== null && this.byIndex.has(Number(m[1]))
   }
 
   /** Nothing left to send: the walk is over. Retry unanswered indexes once, then report. */
@@ -295,7 +305,10 @@ export class EosReader implements CueSheet {
     this.walkAnnounced = true
     const baseCues = [...this.byIndex.values()].filter((c) => c.part === 0).length
     const parts = this.byIndex.size - baseCues
-    this.ev.log('info', `Eos: cue list walk complete — ${baseCues} cues cached${parts ? ` (+${parts} parts)` : ''}${missing.length ? `, ${missing.length} unanswered` : ''}`)
+    // Name the gaps by their neighbours, so a record the desk will not return can be found on the desk.
+    const where = (i: number) => `index ${i} (after ${this.byIndex.get(i - 1)?.number ?? '?'}, before ${this.byIndex.get(i + 1)?.number ?? '?'})`
+    const gaps = missing.length ? `, ${missing.length} unanswered: ${missing.slice(0, 5).map(where).join('; ')}${missing.length > 5 ? '; …' : ''}` : ''
+    this.ev.log('info', `Eos: cue list walk complete — ${baseCues} cues cached${parts ? ` (+${parts} parts)` : ''}${gaps}`)
     this.ev.onCache()
   }
 

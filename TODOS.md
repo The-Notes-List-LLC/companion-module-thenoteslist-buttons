@@ -32,20 +32,20 @@ Line numbers refer to that commit.
 
 ### Low
 
-- [ ] Duplicate desk requests: background entries are never in `queued`, so an index enqueued at high priority while still in `background` is sent twice. Check `byIndex.has(i)` in `drain`. (`src/eos.ts:182-195`)
+- [x] Duplicate desk requests: background entries are never in `queued`, so an index enqueued at high priority while still in `background` is sent twice. Check `byIndex.has(i)` in `drain`. (`src/eos.ts:182-195`)
 - [x] `cues` getter copies and sorts the whole map on every call (several per `publishCursor` / feedback check); `labelOf` is a linear scan. Cache a sorted array plus a number→index map, rebuilt on cache change. (`src/main.ts:54`, `src/eos.ts:93-101`)
 - [x] `selected_cue_offset` counts indexes (parts included) but keep-offset counts base cues; one step over a part shows 2. Use `baseOffset()`. (`src/main.ts:246-250`)
 - [x] Forward step can come to rest on a part at the end of the list (`next < max` guard). (`src/main.ts:263`)
 - [ ] Verify OSC framing on port 3032: the `osc` library's `TCPSocketPort` always SLIP-encodes what it sends (it extends `SLIPPort`); `useSLIP: false` only changes decoding. Eos documents 3032 as OSC 1.0 length-prefixed. It works against the desk today, so check whether Eos tolerates it or the "Use TCP SLIP" box is what's in use. Seen while testing with a fake desk.
-- [ ] One record stays unanswered on some walks (desk reports 1802, walk ends at 824 cues + 977 parts, the one retry doesn't recover it; another walk the same day got all 825). Harmless unless the cursor steps onto it (it then waits, "still loading"). Consider retrying missing indexes again when the cursor reaches them, or logging which index it is.
+- [x] One record stays unanswered on some walks (desk reports 1802, walk ends at 824 cues + 977 parts, the one retry doesn't recover it; another walk the same day got all 825). Harmless unless the cursor steps onto it (it then waits, "still loading"). Consider retrying missing indexes again when the cursor reaches them, or logging which index it is.
 - [x] `describe()` shows "fetch failed" and drops `e.cause.code` (ENOTFOUND, ECONNREFUSED…). (`src/main.ts:657`)
 
 ### Packaging / housekeeping
 
 - [x] `pkg/` and `thenoteslist-0.1.0.tgz` are committed and date from Sep 2, older than every commit in the last-15 log. Gitignore both.
-- [ ] `manifest.json` `apiVersion` 1.12.0 vs installed `@companion-module/base` 1.14.1.
-- [ ] Runtime `node18` is end-of-life; move to `node22`.
-- [ ] Token is stored in plain config and appears in config exports; move it to `secrets` (base 1.14).
+- [x] `manifest.json` `apiVersion` 1.12.0 vs installed `@companion-module/base` 1.14.1.
+- [x] Runtime `node18` is end-of-life; move to `node22`.
+- [x] Token is stored in plain config and appears in config exports; move it to `secrets` (base 1.14).
 - [x] HELP.md says the reader subscribes "once the list is cached"; the code subscribes on connect.
 - [x] HELP.md still mentions a display-only key under "Selected cue" presets; check wording after the LIVE preset removal.
 

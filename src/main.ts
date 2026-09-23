@@ -11,7 +11,7 @@ import {
 } from '@companion-module/base'
 import { randomUUID } from 'node:crypto'
 import { StationApi, type ApiError } from './api.js'
-import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig } from './config.js'
+import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig, type ModuleSecrets } from './config.js'
 import { EosReader } from './eos.js'
 import { CueCursor } from './cursor.js'
 import { ACTION_COLORS, MODULE_COLORS, N_PNG64_DARK, brandedStyle, keyStyle, tint } from './brand.js'
@@ -40,8 +40,10 @@ const ME_INTERVAL_MS = 60000
 const PAIR_POLL_MS = 3500 // server floor is 3000
 const COUNTS_BACKOFF_MAX_MS = 30000
 
-class NotesListInstance extends InstanceBase<ModuleConfig> {
+class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
   private config!: ModuleConfig
+  /** Station token from the secrets store; empty = not paired. */
+  private token = ''
   private api!: StationApi
   private counts: Record<ModuleId, number> = { cue: 0, work: 0, production: 0, electrician: 0 }
   private connected = false
@@ -68,10 +70,10 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   private liveCue: string | null = null
   private cursor = new CueCursor()
 
-  async init(config: ModuleConfig): Promise<void> {
+  async init(config: ModuleConfig, _isFirstInit: boolean, secrets: ModuleSecrets): Promise<void> {
     // Never block init on the network: Companion gives init ~10 s and force-restarts
     // the module when the site is slow. Entities are defined synchronously inside.
-    void this.configUpdated(config)
+    void this.configUpdated(config, secrets)
   }
 
   async destroy(): Promise<void> {
@@ -91,17 +93,28 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     })
   }
 
-  async configUpdated(config: ModuleConfig): Promise<void> {
+  async configUpdated(config: ModuleConfig, secrets?: ModuleSecrets): Promise<void> {
     const gen = ++this.gen
     this.clearTimers()
     this.authFailed = false
     this.countsFailures = 0
     this.config = { ...config, baseUrl: config.baseUrl || DEFAULT_BASE_URL }
-    this.api = new StationApi(this.config.baseUrl, this.config.token || null)
+    this.token = secrets?.token || ''
+    if (this.config.token) {
+      // An install from before the secrets store: move the token out of the
+      // plain config, where it appeared in config exports. The config token is
+      // the one in use and wins: the secrets store can hold a stale value from
+      // an older build (seen: a 6-character leftover that the server refused).
+      this.token = this.config.token
+      this.config = { ...this.config, token: '' }
+      this.saveConfig(this.config, { ...secrets, token: this.token })
+      this.log('info', 'Moved the station token into Companion\'s secrets store.')
+    }
+    this.api = new StationApi(this.config.baseUrl, this.token || null)
     this.defineEntities()
     this.startEos()
 
-    if (this.config.startPairing || !this.config.token) {
+    if (this.config.startPairing || !this.token) {
       // A pairing already in flight (code not yet expired) survives a config
       // re-save: keep polling it instead of minting a new code.
       if (this.pairing && Date.now() < this.pairing.expiresAt) {
@@ -146,10 +159,12 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     try {
       // A saved token means a previous station: revoke it so it does not linger
       // as an "Active" station nobody holds. Best effort.
-      if (this.config.token) {
+      if (this.token) {
         await this.api.revokeSelf().catch(() => undefined)
         if (gen !== this.gen) return
         this.api.setToken(null)
+        this.token = ''
+        this.saveConfig(undefined, { token: '' })
       }
       const start = await this.api.pairStart()
       // Superseded by a newer configUpdated while we waited: that one owns pairing now.
@@ -161,7 +176,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       // Companion does not call configUpdated for this save; a user re-save does,
       // and configUpdated keeps the in-flight pairing (see the guard there).
       this.config = { ...this.config, pairingCode: start.code }
-      this.saveConfig(this.config)
+      this.saveConfig(this.config, undefined)
       this.log('warn', `PAIRING CODE: ${start.code}  →  The Notes List → the show → Settings → Button stations. Expires in 10 minutes. (Also in variable $(${this.label}:pairing_code).)`)
       this.every(gen, () => PAIR_POLL_MS, () => this.pollPairing(), false)
     } catch (e) {
@@ -190,20 +205,20 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       if (res.token) {
         this.pairing = null
         this.setVariableValues({ pairing_code: '' })
-        // Persist the token; the config form shows it as a secret and never in full.
+        // The token goes to the secrets store: never exported, never sent to the web UI.
         const next: ModuleConfig = {
           ...this.config,
           startPairing: false,
           pairingCode: '',
-          token: res.token,
           stationName: res.station?.name ?? '',
           productionName: res.station?.productionName ?? '',
         }
-        this.saveConfig(next)
+        const secrets: ModuleSecrets = { token: res.token }
+        this.saveConfig(next, secrets)
         this.log('info', `Paired as "${res.station?.name}" on ${res.station?.productionName ?? 'production'}.`)
         // Companion does NOT call configUpdated for a module's own saveConfig
         // (it saves with skipNotifyConnection), so start the paired session here.
-        await this.configUpdated(next)
+        await this.configUpdated(next, secrets)
         return 'stop'
       }
     } catch (e) {

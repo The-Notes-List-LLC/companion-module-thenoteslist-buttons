@@ -10,9 +10,9 @@
   "maintainers": [{ "name": "The Notes List LLC", "email": "support@thenoteslist.com" }],
   "legacyIds": [],
   "runtime": {
-    "type": "node18",
+    "type": "node22",
     "api": "nodejs-ipc",
-    "apiVersion": "1.12.0",
+    "apiVersion": "1.14.1",
     "entrypoint": "../dist/main.js"
   },
   "manufacturer": "The Notes List",
