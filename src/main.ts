@@ -50,6 +50,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   // Cue cursor (#907): the desk's list in sheet order, the live cue, and where
   // the operator has stepped to. Cursor index is relative to `cues`.
   private eos: EosReader | null = null
+  /** Desk settings the running reader was started with. */
+  private eosKey = ''
   /** Live view of the reader's cache (sheet order); never a stale snapshot. */
   private get cues(): EosCue[] {
     return this.eos?.cache() ?? []
@@ -119,7 +121,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       this.updateStatus(InstanceStatus.Connecting, `PAIR CODE ${start.code} — enter it in the show's Settings → Button stations`)
       this.setVariableValues({ pairing_code: start.code })
       // Push the code into the stored config so an OPEN settings window shows it.
-      // configUpdated keeps the in-flight pairing (see the guard there).
+      // Companion does not call configUpdated for this save; a user re-save does,
+      // and configUpdated keeps the in-flight pairing (see the guard there).
       this.config = { ...this.config, pairingCode: start.code }
       this.saveConfig(this.config)
       this.log('warn', `PAIRING CODE: ${start.code}  →  The Notes List → the show → Settings → Button stations. Expires in 10 minutes. (Also in variable $(${this.label}:pairing_code).)`)
@@ -149,16 +152,19 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         this.clearTimers()
         this.setVariableValues({ pairing_code: '' })
         // Persist the token; the config form shows it as a secret and never in full.
-        this.saveConfig({
+        const next: ModuleConfig = {
           ...this.config,
           startPairing: false,
           pairingCode: '',
           token: res.token,
           stationName: res.station?.name ?? '',
           productionName: res.station?.productionName ?? '',
-        })
+        }
+        this.saveConfig(next)
         this.log('info', `Paired as "${res.station?.name}" on ${res.station?.productionName ?? 'production'}.`)
-        // Companion calls configUpdated with the saved config next.
+        // Companion does NOT call configUpdated for a module's own saveConfig
+        // (it saves with skipNotifyConnection), so start the paired session here.
+        await this.configUpdated(next)
       }
     } catch (e) {
       const err = e as ApiError
@@ -173,9 +179,14 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
   // ---------------------------------------------------------------- Eos cue cursor
   private startEos(): void {
+    const host = (this.config.eosHost || '').trim()
+    // Only the desk settings matter here: a re-save for anything else (pairing,
+    // base URL) must not drop the connection and re-walk the whole cue list.
+    const key = JSON.stringify([host, !!this.config.eosUseSlip, Number(this.config.eosCueList) || 1])
+    if (this.eos && key === this.eosKey) return
+    this.eosKey = key
     this.eos?.stop()
     this.eos = null
-    const host = (this.config.eosHost || '').trim()
     if (!host) {
       this.setVariableValues({ eos_connected: 'false', cue_live: '', selected_cue: '', selected_cue_label: '', selected_cue_label_short: '', selected_cue_offset: '0' })
       return
