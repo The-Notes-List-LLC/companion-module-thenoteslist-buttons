@@ -92,15 +92,15 @@ The job in the booth is "mark this moment on this cue without looking away from 
 
 ### Later
 
-- [ ] "That last note" key using the unused `setLastStatus()` — cancel or re-prioritise a mis-capture without finding it. (S, endpoint exists)
-- [ ] Priority modifier key (tap to cycle LOW/MED/HIGH, next capture uses it) instead of type × priority presets. (S)
+- [ ] "That last note" key using the unused `setLastStatus()` — cancel or re-prioritise the note just made without finding it in the list. (S, endpoint exists)
+- [ ] Priority modifier key (tap to cycle LOW/MED/HIGH, the next ADD key uses it) instead of type × priority presets. (S)
 - [ ] Open-note count for the selected cue on the NOTE key, e.g. "47.5 · 3 open". (M; needs counts-by-cue endpoint)
 - [ ] Hold-to-record voice memo, transcribed into the description (via the paired browser tab). (L; audio storage + transcription)
 - [ ] Native QLab reader — only if asked; before grandMA3. (M)
 
 ### Don't build
 
-- More Eos features (multi-list, part targeting, pending cue) before capture works.
+- More Eos features (multi-list, part targeting, pending cue) unless someone asks.
 - One-press capture (create the note from the key via `createNote()`, text later). Declined 2026-09-23: the editor-in-tab flow stays the way notes are made.
 - Text entry on the deck (T9, macros).
 - Anything that sends commands to the console — read-only is a selling point; say so in the listing.
