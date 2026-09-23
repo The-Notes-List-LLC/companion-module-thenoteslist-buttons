@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto'
 import { StationApi, type ApiError } from './api.js'
 import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig } from './config.js'
 import { EosReader, type EosCue } from './eos.js'
-import { MODULE_COLORS, brandedStyle, keyStyle } from './brand.js'
+import { MODULE_COLORS, N_PNG64_DARK, brandedStyle, keyStyle } from './brand.js'
 
 const MODULES = [
   { id: 'cue', label: 'Cue Notes' },
@@ -551,17 +551,18 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
     // Selected-cue keys follow the same grammar: one short word, one number, the
     // N in the corner. Dark keys; amber while the selection is off the live cue.
+    // Bottom-aligned where the first word is wide, so it clears the N.
     // Fixed 18 px: with 'auto' an empty cue line (no desk yet) lets the lone word
     // inflate and break mid-word ("LIV / E").
     const dark = '#1f1f1f'
-    const amber = { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) }
+    const amber = { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0), png64: N_PNG64_DARK }
     const offLive = { feedbackId: 'selected_cue_off_live', options: {}, style: amber }
     const connected = { feedbackId: 'eos_connected', options: {}, style: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) } }
-    presets.selected_prev = { type: 'button', category: 'Selected cue', name: 'Selected cue ◀', style: brandedStyle(`◀ CUE\n${cueVar}`, dark, 18), steps: [{ down: [{ actionId: 'selected_cue_prev', options: {} }], up: [] }], feedbacks: [offLive] }
-    presets.selected_next = { type: 'button', category: 'Selected cue', name: 'Selected cue ▶', style: brandedStyle(`CUE ▶\n${cueVar}`, dark, 18), steps: [{ down: [{ actionId: 'selected_cue_next', options: {} }], up: [] }], feedbacks: [offLive] }
+    presets.selected_prev = { type: 'button', category: 'Selected cue', name: 'Selected cue ◀', style: brandedStyle(`◀ CUE\n${cueVar}`, dark, 18, 'right:bottom'), steps: [{ down: [{ actionId: 'selected_cue_prev', options: {} }], up: [] }], feedbacks: [offLive] }
+    presets.selected_next = { type: 'button', category: 'Selected cue', name: 'Selected cue ▶', style: brandedStyle(`CUE ▶\n${cueVar}`, dark, 18, 'right:bottom'), steps: [{ down: [{ actionId: 'selected_cue_next', options: {} }], up: [] }], feedbacks: [offLive] }
     presets.selected_live = { type: 'button', category: 'Selected cue', name: 'Selected cue = live', style: brandedStyle(`LIVE\n$(${L}:cue_live)`, dark, 18), steps: [{ down: [{ actionId: 'selected_cue_live', options: {} }], up: [] }], feedbacks: [connected] }
     presets.display_live = { type: 'button', category: 'Selected cue', name: 'Display: live cue', style: brandedStyle(`LIVE\n$(${L}:cue_live)`, '#000000', 18), steps: [{ down: [], up: [] }], feedbacks: [connected] }
-    presets.display_selected = { type: 'button', category: 'Selected cue', name: 'Display: selected cue', style: brandedStyle(`NOTE\n${cueVar}`, '#000000', 18), steps: [{ down: [], up: [] }], feedbacks: [offLive] }
+    presets.display_selected = { type: 'button', category: 'Selected cue', name: 'Display: selected cue', style: brandedStyle(`NOTE\n${cueVar}`, '#000000', 18, 'right:bottom'), steps: [{ down: [], up: [] }], feedbacks: [offLive] }
     return presets
   }
 
