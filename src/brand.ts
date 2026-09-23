@@ -3,7 +3,7 @@
  * except a 20 px white script "N" at top-left (Companion stretches any png64
  * to the key, so the image must already be key-sized).
  */
-import { combineRgb } from '@companion-module/base'
+import { combineRgb, type CompanionButtonStyleProps } from '@companion-module/base'
 
 export const N_PNG64 = 'iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAYAAABV7bNHAAABLklEQVR42u3VvyvEcRzH8eOW25VFkjKQzWX0YzVYlJSFTCblFhksBmxksF0KpRRlOKUoRlaLP8Ag+bEZLF/PT97DuVGZPs9HPdP3c7fcq+/3q1SSJEmS9M+KouiiEZqmeZqjA5qMz8fpiBo0ldMwM3RLr3RPddoufqSBOmOw5JMe6YbacxhnMX74G01QOc634nyN+uiLzqgnDUMdudw9dzHEXtPZKH3QJW3GMOnOquT43jmJgZ7jMarQAx3TMp3SOw3n+mLupv14B83SRgw2SLV49Bq5jlNuuV6KcQ7jej2uF3Icpy0NQTu0SlcxxlO6q+I79Tir5jrQdfHbC401fec8zgdyfcR6aZcu4m9/y+dDtJLNv3RJkiRJkiRJkiRJkiRJkiRJkiRJkiTpD74By2Z6vXgbfSsAAAAASUVORK5CYII='
 
@@ -60,16 +60,16 @@ export const ACTION_COLORS = {
  * `textHex` overrides the text colour (dark nav keys carry the module colour
  * in their text so a NEXT for Work still reads as Work).
  */
-export function brandedStyle(text: string, hex: string, size: 'auto' | 14 | 18 | 24 = 18, textHex?: string) {
+export function brandedStyle(text: string, hex: string, size: 'auto' | 14 | 18 | 24 = 18, textHex?: string): CompanionButtonStyleProps {
   const base = keyStyle(hex)
   return {
     text,
     size,
     ...base,
     color: textHex ? keyStyle(textHex).bgcolor : base.color,
-    alignment: 'right:bottom' as const,
+    alignment: 'right:bottom',
     png64: parseBg(hex).light ? N_PNG64_DARK : N_PNG64,
-    pngalignment: 'center:center' as const,
+    pngalignment: 'center:center',
     show_topbar: false,
   }
 }

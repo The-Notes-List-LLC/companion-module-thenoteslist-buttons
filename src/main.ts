@@ -9,7 +9,6 @@ import {
   type CompanionVariableDefinition,
   type SomeCompanionConfigField,
 } from '@companion-module/base'
-import { randomUUID } from 'node:crypto'
 import { StationApi, type ApiError } from './api.js'
 import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig, type ModuleSecrets } from './config.js'
 import { EosReader } from './eos.js'
@@ -119,7 +118,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
       // re-save: keep polling it instead of minting a new code.
       if (this.pairing && Date.now() < this.pairing.expiresAt) {
         this.updateStatus(InstanceStatus.Connecting, `PAIR CODE ${this.pairing.code} — enter it in the show's Settings → Button stations`)
-        this.every(gen, () => PAIR_POLL_MS, () => this.pollPairing(), false)
+        this.every(gen, () => PAIR_POLL_MS, async () => this.pollPairing(), false)
         return
       }
       await this.beginPairing(gen)
@@ -127,8 +126,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
     }
     await this.refreshMe()
     if (gen !== this.gen) return
-    this.every(gen, () => this.countsDelay(), () => this.refreshCounts(), true)
-    this.every(gen, () => ME_INTERVAL_MS, () => this.refreshMe(), false)
+    this.every(gen, () => this.countsDelay(), async () => this.refreshCounts(), true)
+    this.every(gen, () => ME_INTERVAL_MS, async () => this.refreshMe(), false)
   }
 
   /**
@@ -178,7 +177,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
       this.config = { ...this.config, pairingCode: start.code }
       this.saveConfig(this.config, undefined)
       this.log('warn', `PAIRING CODE: ${start.code}  →  The Notes List → the show → Settings → Button stations. Expires in 10 minutes. (Also in variable $(${this.label}:pairing_code).)`)
-      this.every(gen, () => PAIR_POLL_MS, () => this.pollPairing(), false)
+      this.every(gen, () => PAIR_POLL_MS, async () => this.pollPairing(), false)
     } catch (e) {
       if (gen !== this.gen) return
       const err = e as ApiError
@@ -342,7 +341,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
         const key = JSON.stringify(me.options)
         if (key !== this.optionsKey) {
           this.optionsKey = key
-          this.options = me.options as ModuleOptions
+          this.options = me.options
           this.defineEntities()
         }
       }

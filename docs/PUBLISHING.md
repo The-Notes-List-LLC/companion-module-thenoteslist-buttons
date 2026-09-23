@@ -40,6 +40,16 @@ Nothing below has been applied here; the working tree was left as found.
 - No git tags yet; the GitHub repo is PRIVATE (must be public for the store).
 - `companion/HELP.md` and `README.md` are current and good; `manifest.json` runtime is node18 / api nodejs-ipc 1.12.0.
 
+## Done in this repo since (2026-09-23)
+
+- `npm run lint` works: `eslint.config.mjs` uses the Companion preset with TypeScript; Prettier formatting is
+  off (the code keeps its own layout), everything else passes.
+- `LICENSE` (MIT, The Notes List LLC) at the root.
+- `pkg/` and `*.tgz` gitignored and untracked.
+- manifest runtime node22, apiVersion 1.14.1; `npm run package` builds clean.
+
+Still open: the two-segment name, making the repo public, the tag, the Slack request and the portal submission.
+
 ## Suggested order
 
 1. Decide the two-segment name; rename repo + package + manifest id + HELP references together.

@@ -1,7 +1,7 @@
 {
   "name": "companion-module-thenoteslist",
   "version": "0.1.0",
-  "description": "Bitfocus Companion module for The Notes List \u2014 create and close notes, live outstanding counts, from any Companion surface (Stream Deck, X-keys, MIDI, phone).",
+  "description": "Bitfocus Companion module for The Notes List — create and close notes, live outstanding counts, from any Companion surface (Stream Deck, X-keys, MIDI, phone).",
   "main": "dist/main.js",
   "type": "module",
   "license": "MIT",
@@ -22,7 +22,10 @@
   },
   "devDependencies": {
     "@companion-module/tools": "^2.8.0",
+    "eslint": "^9.39.5",
+    "prettier": "^3.9.9",
     "typescript": "~5.6.0",
+    "typescript-eslint": "^8.70.1",
     "vitest": "^3.2.7"
   },
   "engines": {

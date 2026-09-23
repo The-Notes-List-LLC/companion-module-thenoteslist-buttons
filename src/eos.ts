@@ -363,7 +363,8 @@ export class EosReader implements CueSheet {
       if (m[1] !== String(this.cueList)) return
       const index = Number(msg.args?.[0]?.value)
       if (!Number.isFinite(index)) return
-      const label = String(msg.args?.[2]?.value ?? '')
+      const raw = msg.args?.[2]?.value
+      const label = typeof raw === 'string' ? raw : ''
       if (index < 0) {
         // A by-number get (`/eos/get/cue/<list>/<num>`) answers with index -1:
         // Eos does not place the cue for us. Keep the label only; the walk (or
