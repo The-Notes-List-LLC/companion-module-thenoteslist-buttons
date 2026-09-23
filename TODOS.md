@@ -7,9 +7,9 @@ Line numbers refer to that commit.
 
 ### High
 
-- [ ] **Detect a silently dead Eos connection.** After the walk the reader sends nothing; no `/eos/ping`, keepalive or reply deadline. A rebooted desk or pulled cable leaves the socket half-open, `close` never fires, `cue_live` freezes and notes land on a stale cue. (`src/eos.ts:130-171`)
+- [x] **Detect a silently dead Eos connection.** After the walk the reader sends nothing; no `/eos/ping`, keepalive or reply deadline. A rebooted desk or pulled cable leaves the socket half-open, `close` never fires, `cue_live` freezes and notes land on a stale cue. (`src/eos.ts:130-171`)
   - Send `/eos/ping` every 5 s; `socket.close()` if nothing arrives in ~10 s.
-- [ ] **`eos_connected` feedback stays green while disconnected.** It returns `cues.length > 0 || liveCue !== null`, neither of which is cleared on close. (`src/main.ts:486`)
+- [x] **`eos_connected` feedback stays green while disconnected.** It returns `cues.length > 0 || liveCue !== null`, neither of which is cleared on close. (`src/main.ts:486`)
   - Drive it from a boolean set by `onStatus`; blank cue variables while disconnected.
 - [ ] **Cursor is stored as a sheet index, not a cue.** An insert/delete on the desk or a reconnect clears `byIndex`; after the re-walk the index points at a different cue and a note goes one cue off with no warning. (`src/main.ts:60`, `src/eos.ts:137,262`)
   - Store the cursor as a cue number (plus offset hint) and resolve the index on demand.
@@ -28,7 +28,7 @@ Line numbers refer to that commit.
   - Bump a generation counter on entry; return after each await if it changed.
 - [ ] **Counts polling ignores network errors.** Only 401/402/403/410 are handled; timeouts / DNS / ECONNREFUSED leave status OK and counts stale. After revocation every tick makes 2 requests forever. (`src/main.ts:337-340`)
   - On any error mark disconnected and blank counts; on 401 stop the counts timer.
-- [ ] **Reconnect only partly resets reader state.** `ready` clears `byIndex` but not `walkAnnounced`, `queue`, `queued`; `onQueueIdle` then returns early and unanswered indexes are never retried. (`src/eos.ts:134-147,208`)
+- [x] **Reconnect only partly resets reader state.** `ready` clears `byIndex` but not `walkAnnounced`, `queue`, `queued`; `onQueueIdle` then returns early and unanswered indexes are never retried. (`src/eos.ts:134-147,208`)
 
 ### Low
 
@@ -36,6 +36,7 @@ Line numbers refer to that commit.
 - [ ] `cues` getter copies and sorts the whole map on every call (several per `publishCursor` / feedback check); `labelOf` is a linear scan. Cache a sorted array plus a number→index map, rebuilt on cache change. (`src/main.ts:54`, `src/eos.ts:93-101`)
 - [ ] `selected_cue_offset` counts indexes (parts included) but keep-offset counts base cues; one step over a part shows 2. Use `baseOffset()`. (`src/main.ts:246-250`)
 - [ ] Forward step can come to rest on a part at the end of the list (`next < max` guard). (`src/main.ts:263`)
+- [ ] Verify OSC framing on port 3032: the `osc` library's `TCPSocketPort` always SLIP-encodes what it sends (it extends `SLIPPort`); `useSLIP: false` only changes decoding. Eos documents 3032 as OSC 1.0 length-prefixed. It works against the desk today, so check whether Eos tolerates it or the "Use TCP SLIP" box is what's in use. Seen while testing with a fake desk.
 - [ ] `describe()` shows "fetch failed" and drops `e.cause.code` (ENOTFOUND, ECONNREFUSED…). (`src/main.ts:657`)
 
 ### Packaging / housekeeping
@@ -44,8 +45,8 @@ Line numbers refer to that commit.
 - [ ] `manifest.json` `apiVersion` 1.12.0 vs installed `@companion-module/base` 1.14.1.
 - [ ] Runtime `node18` is end-of-life; move to `node22`.
 - [ ] Token is stored in plain config and appears in config exports; move it to `secrets` (base 1.14).
-- [ ] HELP.md says the reader subscribes "once the list is cached"; the code subscribes on connect.
-- [ ] HELP.md still mentions a display-only key under "Selected cue" presets; check wording after the LIVE preset removal.
+- [x] HELP.md says the reader subscribes "once the list is cached"; the code subscribes on connect.
+- [x] HELP.md still mentions a display-only key under "Selected cue" presets; check wording after the LIVE preset removal.
 
 ### Tests (none exist)
 
@@ -71,7 +72,7 @@ Line numbers refer to that commit.
 ### Architecture
 
 - [ ] One HTTP scheduler: one call in flight, per-request timeout, backoff on errors, generation token so config changes cancel superseded runs.
-- [ ] Explicit Eos health: ping with deadline; a single connected flag drives variables and feedbacks.
+- [x] Explicit Eos health: ping with deadline; a single connected flag drives variables and feedbacks.
 - [ ] Reader exposes an indexed view (sorted array + number map) rebuilt only on cache change.
 
 ## Features (CEO review)
@@ -110,7 +111,7 @@ Scores: hierarchy 3, colour meaning 3, error-proofing 3, consistency 4, legibili
 - [ ] **Action colours on Highlighted-note keys.** All are module purple, so SET CANCL looks like NEXT NOTE. Green (#16a34a) Done, red (#dc2626) Cancel, neutral dark (#1f1f1f) for next/prev/undo/redo/To Do. (`src/main.ts:580-594`)
 - [ ] **Text collides with the N** on Go-to keys (WORK / PROD / ELEC NOTES) and NEXT / PREV NOTE. Apply the bottom-align rule from `brand.ts`, or drop the N on those keys. (`src/main.ts:573,586-587`)
 - [ ] **"ADD ___ NOTE" spends 2 of 3 lines on filler.** Make the type word (SM, DIR) 24px with a small "ADD" label; drop "NOTE". (`src/main.ts:562`)
-- [ ] **LIVE key green means "Eos connected", not "on the live cue".** Green only when on live; grey "NO DESK" when the desk is offline. (`src/main.ts:604,607`)
+- [x] **LIVE key green means "Eos connected", not "on the live cue".** Green only when on live; grey "NO DESK" when the desk is offline. (`src/main.ts:604,607`)
 - [ ] **Baselines jump across a row.** UNDO / REDO are `right:bottom` beside centred keys; put every key on one baseline. (`src/main.ts:592-593`)
 - [ ] **NOTE display key**: 14px label unreadable at booth distance, and it looks pressable. 12px "NOTE ON" label, 24px number, outline style so it reads as a display. (`src/main.ts:608`)
 - [ ] **Chip colours can clash with module colours** (ADD SM / ADD PROG ≈ Cue purple; ADD PROD grey ≈ empty keys). Darken a chip colour that sits within a small ΔE of a module or action colour. (`src/brand.ts` `keyStyle`)

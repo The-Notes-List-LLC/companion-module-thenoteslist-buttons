@@ -4,6 +4,8 @@ declare module 'osc' {
   export interface OscBundle { timeTag: unknown; packets: Array<OscMessage | OscBundle> }
   export class TCPSocketPort {
     constructor(opts: { address: string; port: number; useSLIP?: boolean; metadata?: boolean })
+    /** The underlying net.Socket once opened. */
+    socket?: { destroy(): void }
     open(): void
     close(): void
     send(packet: { address: string; args: OscArg[] }): void

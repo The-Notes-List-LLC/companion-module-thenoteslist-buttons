@@ -57,6 +57,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     return this.eos?.cache() ?? []
   }
   private cueCount = 0
+  /** The reader's socket is up and the desk is answering. */
+  private eosConnected = false
   private liveCue: string | null = null
   /** Sheet index the operator stepped to; null = follow live. */
   private cursorIndex: number | null = null
@@ -187,15 +189,12 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.eosKey = key
     this.eos?.stop()
     this.eos = null
-    if (!host) {
-      this.setVariableValues({ eos_connected: 'false', cue_live: '', selected_cue: '', selected_cue_label: '', selected_cue_label_short: '', selected_cue_offset: '0' })
-      return
-    }
+    this.setEosConnected(false)
+    if (!host) return
     this.eos = new EosReader(host, !!this.config.eosUseSlip, Number(this.config.eosCueList) || 1, {
       onStatus: (connected, message) => {
         this.log('debug', `Eos status: ${connected ? 'connected' : 'disconnected'} (${message})`)
-        this.setVariableValues({ eos_connected: connected ? 'true' : 'false' })
-        this.checkFeedbacks('eos_connected')
+        this.setEosConnected(connected)
       },
       onLive: (num) => {
         const changed = num !== this.liveCue
@@ -223,6 +222,22 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       log: (level, msg) => this.log(level, msg),
     })
     this.eos.start()
+  }
+
+  /**
+   * One flag drives the variable and every desk feedback. Losing the desk also
+   * forgets the live cue and the cursor: a blank cue is safer than a frozen one
+   * that notes would quietly land on. The desk resends its live cue on reconnect.
+   */
+  private setEosConnected(connected: boolean): void {
+    this.eosConnected = connected
+    if (!connected) {
+      this.liveCue = null
+      this.cursorIndex = null
+    }
+    this.setVariableValues({ eos_connected: connected ? 'true' : 'false' })
+    this.publishCursor()
+    this.checkFeedbacks('eos_connected', 'selected_cue_on_live')
   }
 
   private liveIndex(): number | null {
@@ -304,7 +319,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       selected_cue_label_short: (c?.label ?? '').toUpperCase().slice(0, 10),
       selected_cue_offset: String(this.cursorOffset()),
     })
-    this.checkFeedbacks('selected_cue_off_live')
+    this.checkFeedbacks('selected_cue_off_live', 'selected_cue_on_live')
   }
 
   // ---------------------------------------------------------------- polling
@@ -489,12 +504,19 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         options: [],
         callback: () => this.cursorOffset() !== 0,
       },
+      selected_cue_on_live: {
+        type: 'boolean',
+        name: 'Selected cue is the live cue (desk connected)',
+        defaultStyle: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) },
+        options: [],
+        callback: () => this.eosConnected && this.liveCue !== null && this.cursorOffset() === 0,
+      },
       eos_connected: {
         type: 'boolean',
         name: 'Eos desk connected (read-only reader)',
         defaultStyle: { bgcolor: combineRgb(22, 163, 74), color: combineRgb(255, 255, 255) },
         options: [],
-        callback: () => (this.eos ? this.cues.length > 0 || this.liveCue !== null : false),
+        callback: () => this.eosConnected,
       },
       connected: {
         type: 'boolean',
@@ -612,10 +634,13 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     const dark = '#1f1f1f'
     const amber = { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0), png64: N_PNG64_DARK }
     const offLive = { feedbackId: 'selected_cue_off_live', options: {}, style: amber }
-    const connected = { feedbackId: 'eos_connected', options: {}, style: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) } }
+    // LIVE is green only while the selection IS the live cue; stepped away it
+    // stays dark (the ◀ / ▶ keys go amber). Without a desk it says so in grey.
+    const onLive = { feedbackId: 'selected_cue_on_live', options: {}, style: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) } }
+    const noDesk = { feedbackId: 'eos_connected', options: {}, isInverted: true, style: { text: 'NO\nDESK', color: combineRgb(128, 128, 128) } }
     presets.selected_prev = { type: 'button', category: 'Selected cue', name: 'Selected cue ◀', style: brandedStyle(`◀ CUE\n${cueVar}`, dark, 18, 'right:bottom'), steps: [{ down: [{ actionId: 'selected_cue_prev', options: {} }], up: [] }], feedbacks: [offLive] }
     presets.selected_next = { type: 'button', category: 'Selected cue', name: 'Selected cue ▶', style: brandedStyle(`CUE ▶\n${cueVar}`, dark, 18, 'right:bottom'), steps: [{ down: [{ actionId: 'selected_cue_next', options: {} }], up: [] }], feedbacks: [offLive] }
-    presets.selected_live = { type: 'button', category: 'Selected cue', name: 'Selected cue = live', style: brandedStyle(`LIVE\n$(${L}:cue_live)`, dark, 18), steps: [{ down: [{ actionId: 'selected_cue_live', options: {} }], up: [] }], feedbacks: [connected] }
+    presets.selected_live = { type: 'button', category: 'Selected cue', name: 'Selected cue = live', style: brandedStyle(`LIVE\n$(${L}:cue_live)`, dark, 18), steps: [{ down: [{ actionId: 'selected_cue_live', options: {} }], up: [] }], feedbacks: [onLive, noDesk] }
     presets.display_selected = { type: 'button', category: 'Selected cue', name: 'Display: selected cue (number and label)', style: brandedStyle(`NOTE\n${cueVar}\n$(${L}:selected_cue_label_short)`, '#000000', 14, 'right:bottom'), steps: [{ down: [], up: [] }], feedbacks: [offLive] }
     return presets
   }

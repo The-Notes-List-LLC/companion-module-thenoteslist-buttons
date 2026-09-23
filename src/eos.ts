@@ -45,6 +45,11 @@ const PORT_SLIP = 3037
 const WINDOW = 8 // cues either side of the live cue kept warm
 const REQUEST_GAP_MS = 22 // one request per 22 ms (~45/s); still no burst for the desk
 const RECONNECT_MS = 5000
+// Once the walk is done the desk has nothing to say to us, so a pulled cable or
+// a rebooted desk leaves a half-open socket that never closes. Ping it, and drop
+// the connection when nothing at all has arrived for a while.
+const PING_MS = 5000
+const SILENCE_MS = 12000
 
 export class EosReader {
   private socket: TCPSocketPortType | null = null
@@ -66,6 +71,8 @@ export class EosReader {
   private subscribed = false
   private announcedCount = false
   private drainTimer: NodeJS.Timeout | null = null
+  private pingTimer: NodeJS.Timeout | null = null
+  private lastRx = 0
 
   constructor(
     private readonly host: string,
@@ -84,6 +91,7 @@ export class EosReader {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
     if (this.drainTimer) clearTimeout(this.drainTimer)
     if (this.publishTimer) clearTimeout(this.publishTimer)
+    this.stopPing()
     try { this.socket?.close() } catch { /* already closed */ }
     this.socket = null
     this.connected = false
@@ -134,7 +142,18 @@ export class EosReader {
     socket.on('ready', () => {
       this.connected = true
       this.subscribed = false
+      // A fresh session: forget everything the last one had in flight, or the
+      // walk thinks it already finished and never retries what went unanswered.
       this.byIndex.clear()
+      this.queue = []
+      this.background = []
+      this.queued.clear()
+      this.wantedByNumber.clear()
+      this.count = 0
+      this.walkAnnounced = false
+      this.walkRetried = false
+      this.announcedCount = false
+      this.startPing(socket)
       this.ev.onStatus(true, `Eos ${this.host}:${port}`)
       this.ev.log('info', `Eos: connected to ${this.host}:${port} (read-only), cue list ${this.cueList}`)
       // Subscribe at once: the active/pending cue outputs ride the subscription.
@@ -145,10 +164,16 @@ export class EosReader {
       this.enqueue('/eos/subscribe')
       this.enqueue(`/eos/get/cue/${this.cueList}/count`)
     })
-    socket.on('message', (msg) => this.onMessage(msg))
+    socket.on('message', (msg) => {
+      this.lastRx = Date.now()
+      this.onMessage(msg)
+    })
     // Eos answers /eos/get/cue/... with BUNDLES (the cue record plus its fx /
     // links / actions messages). Unpack them; nested bundles too.
-    socket.on('bundle', (bundle) => this.onBundle(bundle))
+    socket.on('bundle', (bundle) => {
+      this.lastRx = Date.now()
+      this.onBundle(bundle)
+    })
     socket.on('error', (err) => {
       if (this.connected) this.ev.log('warn', `Eos: ${err.message}`)
     })
@@ -156,11 +181,7 @@ export class EosReader {
       // A reader stopped by a config re-save must not report "disconnected"
       // after its replacement has already connected.
       if (this.closed || this.socket !== socket) return
-      const was = this.connected
-      this.connected = false
-      if (was) this.ev.log('warn', 'Eos: connection closed')
-      this.ev.onStatus(false, 'Eos: disconnected')
-      this.scheduleReconnect()
+      this.lost(socket, 'Eos: connection closed')
     })
     try {
       socket.open()
@@ -168,6 +189,37 @@ export class EosReader {
       this.ev.log('warn', `Eos: open failed: ${(e as Error).message}`)
       this.scheduleReconnect()
     }
+  }
+
+  /** The connection is gone (closed, or silent too long): report it once and reconnect. */
+  private lost(socket: TCPSocketPortType, message: string): void {
+    this.stopPing()
+    // Detach first so this socket's own late 'close' is ignored.
+    if (this.socket === socket) this.socket = null
+    try { socket.socket?.destroy() } catch { /* already gone */ }
+    const was = this.connected
+    this.connected = false
+    if (was) this.ev.log('warn', message)
+    this.ev.onStatus(false, 'Eos: disconnected')
+    this.scheduleReconnect()
+  }
+
+  private startPing(socket: TCPSocketPortType): void {
+    this.stopPing()
+    this.lastRx = Date.now()
+    this.pingTimer = setInterval(() => {
+      if (this.socket !== socket) return this.stopPing()
+      if (Date.now() - this.lastRx > SILENCE_MS) {
+        this.lost(socket, `Eos: no reply from the desk for ${Math.round(SILENCE_MS / 1000)} s; reconnecting`)
+        return
+      }
+      this.enqueue('/eos/ping')
+    }, PING_MS)
+  }
+
+  private stopPing(): void {
+    if (this.pingTimer) clearInterval(this.pingTimer)
+    this.pingTimer = null
   }
 
   private scheduleReconnect(): void {
