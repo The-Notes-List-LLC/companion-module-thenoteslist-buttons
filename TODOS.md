@@ -19,14 +19,14 @@ Line numbers refer to that commit.
 
 ### Medium
 
-- [ ] **No fetch timeout.** Node fetch has no default deadline. (`src/api.ts:18`)
+- [x] **No fetch timeout.** Node fetch has no default deadline. (`src/api.ts:18`)
   - Pass `signal: AbortSignal.timeout(8000)`.
-- [ ] **Polls overlap.** `setInterval` fires `refreshCounts` every 5 s whether or not the last call finished; requests pile up on a slow server. (`src/main.ts:103`)
+- [x] **Polls overlap.** `setInterval` fires `refreshCounts` every 5 s whether or not the last call finished; requests pile up on a slow server. (`src/main.ts:103`)
   - Use a `setTimeout` chain started after each call finishes, or an in-flight guard.
-- [ ] **Pairing poll race.** Poll A gets the token, poll B (already in flight) gets 409/410 and sets "Pairing ended" right after a successful pair. (`src/main.ts:126,137-171`)
-- [ ] **`configUpdated` can run concurrently** (`void` from `init` plus a user save). Both runs push intervals after their awaits, doubling polling; a superseded run can start pairing with the old config. (`src/main.ts:65,84-106`)
+- [x] **Pairing poll race.** Poll A gets the token, poll B (already in flight) gets 409/410 and sets "Pairing ended" right after a successful pair. (`src/main.ts:126,137-171`)
+- [x] **`configUpdated` can run concurrently** (`void` from `init` plus a user save). Both runs push intervals after their awaits, doubling polling; a superseded run can start pairing with the old config. (`src/main.ts:65,84-106`)
   - Bump a generation counter on entry; return after each await if it changed.
-- [ ] **Counts polling ignores network errors.** Only 401/402/403/410 are handled; timeouts / DNS / ECONNREFUSED leave status OK and counts stale. After revocation every tick makes 2 requests forever. (`src/main.ts:337-340`)
+- [x] **Counts polling ignores network errors.** Only 401/402/403/410 are handled; timeouts / DNS / ECONNREFUSED leave status OK and counts stale. After revocation every tick makes 2 requests forever. (`src/main.ts:337-340`)
   - On any error mark disconnected and blank counts; on 401 stop the counts timer.
 - [x] **Reconnect only partly resets reader state.** `ready` clears `byIndex` but not `walkAnnounced`, `queue`, `queued`; `onQueueIdle` then returns early and unanswered indexes are never retried. (`src/eos.ts:134-147,208`)
 
@@ -38,7 +38,7 @@ Line numbers refer to that commit.
 - [x] Forward step can come to rest on a part at the end of the list (`next < max` guard). (`src/main.ts:263`)
 - [ ] Verify OSC framing on port 3032: the `osc` library's `TCPSocketPort` always SLIP-encodes what it sends (it extends `SLIPPort`); `useSLIP: false` only changes decoding. Eos documents 3032 as OSC 1.0 length-prefixed. It works against the desk today, so check whether Eos tolerates it or the "Use TCP SLIP" box is what's in use. Seen while testing with a fake desk.
 - [ ] One record stays unanswered on some walks (desk reports 1802, walk ends at 824 cues + 977 parts, the one retry doesn't recover it; another walk the same day got all 825). Harmless unless the cursor steps onto it (it then waits, "still loading"). Consider retrying missing indexes again when the cursor reaches them, or logging which index it is.
-- [ ] `describe()` shows "fetch failed" and drops `e.cause.code` (ENOTFOUND, ECONNREFUSED…). (`src/main.ts:657`)
+- [x] `describe()` shows "fetch failed" and drops `e.cause.code` (ENOTFOUND, ECONNREFUSED…). (`src/main.ts:657`)
 
 ### Packaging / housekeeping
 
@@ -64,7 +64,7 @@ Line numbers refer to that commit.
   - keep-offset across parts
   - uncached targets
   - insert above the cursor
-- [ ] Mock fetch for the instance and test:
+- [x] Mock fetch for the instance and test:
   - pairing success path
   - overlapping pair-poll race
   - concurrent `configUpdated`
@@ -72,7 +72,7 @@ Line numbers refer to that commit.
 
 ### Architecture
 
-- [ ] One HTTP scheduler: one call in flight, per-request timeout, backoff on errors, generation token so config changes cancel superseded runs.
+- [x] One HTTP scheduler: one call in flight, per-request timeout, backoff on errors, generation token so config changes cancel superseded runs.
 - [x] Explicit Eos health: ping with deadline; a single connected flag drives variables and feedbacks.
 - [x] Reader exposes an indexed view (sorted array + number map) rebuilt only on cache change.
 

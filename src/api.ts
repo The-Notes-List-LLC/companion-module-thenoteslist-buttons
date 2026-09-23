@@ -2,7 +2,11 @@
  * Thin client for /api/stations/* (see docs/BUTTON_STATIONS.md in the app repo).
  * Every response is JSON; errors carry { error, message }.
  */
+/** status 0 = no HTTP answer at all (timeout, DNS, refused, offline). */
 export interface ApiError { status: number; error: string; message: string }
+
+/** Every request gives up after this long; Node's fetch otherwise waits indefinitely. */
+const TIMEOUT_MS = 8000
 
 export class StationApi {
   constructor(private baseUrl: string, private token: string | null) {}
@@ -15,7 +19,13 @@ export class StationApi {
       if (!this.token) throw <ApiError>{ status: 401, error: 'unauthorized', message: 'Not paired' }
       headers.authorization = `Bearer ${this.token}`
     }
-    const res = await fetch(`${this.baseUrl.replace(/\/$/, '')}${path}`, { ...init, headers })
+    const url = `${this.baseUrl.replace(/\/$/, '')}${path}`
+    let res: Response
+    try {
+      res = await fetch(url, { ...init, headers, signal: AbortSignal.timeout(TIMEOUT_MS) })
+    } catch (e) {
+      throw <ApiError>{ status: 0, error: 'network', message: networkMessage(e, url) }
+    }
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
     if (!res.ok) {
       throw <ApiError>{ status: res.status, error: String(body.error ?? 'error'), message: String(body.message ?? res.statusText) }
@@ -51,4 +61,14 @@ export class StationApi {
   setLastStatus(status: string) {
     return this.call<{ note: { id: string; status: string } }>('/api/stations/notes/last/status', { method: 'POST', body: JSON.stringify({ status }) })
   }
+}
+
+/** "fetch failed" says nothing; name the host and the real cause (ENOTFOUND, ECONNREFUSED, timeout…). */
+function networkMessage(e: unknown, url: string): string {
+  const err = e as { name?: string; message?: string; cause?: { code?: string; message?: string } }
+  let host = url
+  try { host = new URL(url).host } catch { /* keep the raw url */ }
+  if (err?.name === 'TimeoutError' || err?.name === 'AbortError') return `No answer from ${host} within ${TIMEOUT_MS / 1000} s`
+  const cause = err?.cause?.code ?? err?.cause?.message
+  return cause ? `Cannot reach ${host} (${cause})` : `Cannot reach ${host} (${err?.message ?? String(e)})`
 }

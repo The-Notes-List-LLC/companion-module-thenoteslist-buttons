@@ -38,13 +38,23 @@ const STATUSES = [
 const COUNTS_INTERVAL_MS = 5000
 const ME_INTERVAL_MS = 60000
 const PAIR_POLL_MS = 3500 // server floor is 3000
+const COUNTS_BACKOFF_MAX_MS = 30000
 
 class NotesListInstance extends InstanceBase<ModuleConfig> {
   private config!: ModuleConfig
   private api!: StationApi
   private counts: Record<ModuleId, number> = { cue: 0, work: 0, production: 0, electrician: 0 }
   private connected = false
-  private timers: NodeJS.Timeout[] = []
+  private timers: Set<NodeJS.Timeout> = new Set()
+  /**
+   * Bumped by every configUpdated (and destroy). Loops and awaits started under
+   * an older value stop themselves, so a re-save while a request is in flight
+   * can never leave two sets of polling running.
+   */
+  private gen = 0
+  /** The server refused this station (revoked, unpaid, gone): only /me keeps asking. */
+  private authFailed = false
+  private countsFailures = 0
   private pairing: { code: string; pollSecret: string; expiresAt: number } | null = null
   private options: ModuleOptions | null = null
   private optionsKey = ''
@@ -65,6 +75,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   }
 
   async destroy(): Promise<void> {
+    this.gen++
     this.clearTimers()
     this.eos?.stop()
     this.eos = null
@@ -81,7 +92,10 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   }
 
   async configUpdated(config: ModuleConfig): Promise<void> {
+    const gen = ++this.gen
     this.clearTimers()
+    this.authFailed = false
+    this.countsFailures = 0
     this.config = { ...config, baseUrl: config.baseUrl || DEFAULT_BASE_URL }
     this.api = new StationApi(this.config.baseUrl, this.config.token || null)
     this.defineEntities()
@@ -92,28 +106,54 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       // re-save: keep polling it instead of minting a new code.
       if (this.pairing && Date.now() < this.pairing.expiresAt) {
         this.updateStatus(InstanceStatus.Connecting, `PAIR CODE ${this.pairing.code} — enter it in the show's Settings → Button stations`)
-        this.timers.push(setInterval(() => void this.pollPairing(), PAIR_POLL_MS))
+        this.every(gen, () => PAIR_POLL_MS, () => this.pollPairing(), false)
         return
       }
-      await this.beginPairing()
+      await this.beginPairing(gen)
       return
     }
     await this.refreshMe()
-    this.timers.push(setInterval(() => void this.refreshCounts(), COUNTS_INTERVAL_MS))
-    this.timers.push(setInterval(() => void this.refreshMe(), ME_INTERVAL_MS))
-    void this.refreshCounts()
+    if (gen !== this.gen) return
+    this.every(gen, () => this.countsDelay(), () => this.refreshCounts(), true)
+    this.every(gen, () => ME_INTERVAL_MS, () => this.refreshMe(), false)
+  }
+
+  /**
+   * Run `fn` (now, or after the first delay) and again `delay()` after each run
+   * FINISHES, so a slow server can never pile requests up. Stops when the
+   * session changes or `fn` returns 'stop'.
+   */
+  private every(gen: number, delay: () => number, fn: () => Promise<void | 'stop'>, now: boolean): void {
+    const schedule = (ms: number) => {
+      const t = setTimeout(() => {
+        this.timers.delete(t)
+        void tick()
+      }, ms)
+      this.timers.add(t)
+    }
+    const tick = async () => {
+      if (gen !== this.gen) return
+      const r = await fn().catch((e) => this.log('debug', `poll failed: ${describe(e)}`))
+      if (gen !== this.gen || r === 'stop') return
+      schedule(delay())
+    }
+    if (now) void tick()
+    else schedule(delay())
   }
 
   // ---------------------------------------------------------------- pairing
-  private async beginPairing(): Promise<void> {
+  private async beginPairing(gen: number): Promise<void> {
     try {
       // A saved token means a previous station: revoke it so it does not linger
       // as an "Active" station nobody holds. Best effort.
       if (this.config.token) {
         await this.api.revokeSelf().catch(() => undefined)
+        if (gen !== this.gen) return
         this.api.setToken(null)
       }
       const start = await this.api.pairStart()
+      // Superseded by a newer configUpdated while we waited: that one owns pairing now.
+      if (gen !== this.gen) return
       this.pairing = { code: start.code, pollSecret: start.pollSecret, expiresAt: Date.parse(start.expiresAt) }
       this.updateStatus(InstanceStatus.Connecting, `PAIR CODE ${start.code} — enter it in the show's Settings → Button stations`)
       this.setVariableValues({ pairing_code: start.code })
@@ -123,8 +163,9 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       this.config = { ...this.config, pairingCode: start.code }
       this.saveConfig(this.config)
       this.log('warn', `PAIRING CODE: ${start.code}  →  The Notes List → the show → Settings → Button stations. Expires in 10 minutes. (Also in variable $(${this.label}:pairing_code).)`)
-      this.timers.push(setInterval(() => void this.pollPairing(), PAIR_POLL_MS))
+      this.every(gen, () => PAIR_POLL_MS, () => this.pollPairing(), false)
     } catch (e) {
+      if (gen !== this.gen) return
       const err = e as ApiError
       const msg = err.status === 429
         ? 'Too many pairings started from this network. Wait a few minutes, then untick and re-tick "Start pairing".'
@@ -134,19 +175,20 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     }
   }
 
-  private async pollPairing(): Promise<void> {
-    if (!this.pairing) return
+  /** One poll of the pairing; the caller runs it again only after this one finishes, so polls never overlap. */
+  private async pollPairing(): Promise<void | 'stop'> {
+    if (!this.pairing) return 'stop'
     if (Date.now() > this.pairing.expiresAt) {
       this.pairing = null
-      this.clearTimers()
       this.updateStatus(InstanceStatus.Disconnected, 'Pairing code expired — tick "Start pairing" again')
-      return
+      return 'stop'
     }
     try {
       const res = await this.api.pairPoll(this.pairing.code, this.pairing.pollSecret)
+      // A token is kept even if the config changed meanwhile: the server has
+      // already handed it over, and dropping it would strand the station.
       if (res.token) {
         this.pairing = null
-        this.clearTimers()
         this.setVariableValues({ pairing_code: '' })
         // Persist the token; the config form shows it as a secret and never in full.
         const next: ModuleConfig = {
@@ -162,14 +204,15 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         // Companion does NOT call configUpdated for a module's own saveConfig
         // (it saves with skipNotifyConnection), so start the paired session here.
         await this.configUpdated(next)
+        return 'stop'
       }
     } catch (e) {
       const err = e as ApiError
       if (err.status === 429) return // slow down: just wait for the next tick
       if (err.status === 410 || err.status === 409 || err.status === 404) {
         this.pairing = null
-        this.clearTimers()
         this.updateStatus(InstanceStatus.Disconnected, `Pairing ended: ${err.message}`)
+        return 'stop'
       }
     }
   }
@@ -274,6 +317,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     try {
       const me = await this.api.me()
       this.connected = true
+      this.authFailed = false
       this.updateStatus(InstanceStatus.Ok, `${me.station.name} · ${me.production.name ?? ''}`)
       this.setVariableValues({ station_name: me.station.name, production_name: me.production.name ?? '', connected: 'true' })
       // The show's real, renamable types and priorities feed the action dropdowns.
@@ -288,6 +332,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     } catch (e) {
       this.connected = false
       const err = e as ApiError
+      this.authFailed = isAuthError(err)
       const status = err.status === 401 ? InstanceStatus.BadConfig : InstanceStatus.ConnectionFailure
       this.updateStatus(status, err.status === 401 ? 'Not paired — tick "Start pairing"' : describe(e))
       this.setVariableValues({ connected: 'false' })
@@ -295,9 +340,17 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.checkFeedbacks('connected')
   }
 
+  /** 5 s normally; doubles per failure up to 30 s so an outage is not hammered. */
+  private countsDelay(): number {
+    return Math.min(COUNTS_INTERVAL_MS * 2 ** this.countsFailures, COUNTS_BACKOFF_MAX_MS)
+  }
+
   private async refreshCounts(): Promise<void> {
+    // Refused by the server: only the /me loop keeps asking until that changes.
+    if (this.authFailed) return
     try {
       const c = await this.api.counts()
+      this.countsFailures = 0
       for (const m of MODULES) this.counts[m.id] = c[m.id]?.outstanding ?? 0
       this.setVariableValues({
         cue_outstanding: this.counts.cue,
@@ -309,7 +362,21 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       if (!this.connected) void this.refreshMe()
     } catch (e) {
       const err = e as ApiError
-      if (err.status === 401 || err.status === 402 || err.status === 403 || err.status === 410) void this.refreshMe()
+      if (isAuthError(err)) {
+        void this.refreshMe()
+        return
+      }
+      // Network trouble or a server error. One miss can be a blip; from the
+      // second, say so and blank the counts rather than show stale numbers.
+      this.countsFailures++
+      if (this.countsFailures === 2) {
+        this.log('warn', `Outstanding counts unavailable: ${describe(e)}`)
+        this.connected = false
+        this.updateStatus(InstanceStatus.ConnectionFailure, describe(e))
+        for (const m of MODULES) this.counts[m.id] = 0
+        this.setVariableValues({ connected: 'false', cue_outstanding: '', work_outstanding: '', production_outstanding: '', electrician_outstanding: '' })
+        this.checkFeedbacks('connected', 'outstanding_above')
+      }
     }
   }
 
@@ -602,8 +669,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   }
 
   private clearTimers(): void {
-    for (const t of this.timers) clearInterval(t)
-    this.timers = []
+    for (const t of this.timers) clearTimeout(t)
+    this.timers.clear()
   }
 }
 
@@ -635,6 +702,11 @@ function perModuleChoices(
       isVisibleData: { module: m.id },
     }
   })
+}
+
+/** The station itself is refused (not a network problem): revoked, unpaid, production gone. */
+function isAuthError(err: Partial<ApiError>): boolean {
+  return err?.status === 401 || err?.status === 402 || err?.status === 403 || err?.status === 410
 }
 
 function describe(e: unknown): string {
