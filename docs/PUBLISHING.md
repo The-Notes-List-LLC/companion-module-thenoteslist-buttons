@@ -52,7 +52,13 @@ Nothing below has been applied here; the working tree was left as found.
   (with `legacyIds: ["thenoteslist"]`), products `Button Stations`, README and repo URLs updated; the GitHub repo
   itself still has to be renamed to `companion-module-thenoteslist-buttons`.
 
-Still open: renaming the GitHub repo, making it public, the tag, the Slack request and the portal submission.
+- Repo renamed to `companion-module-thenoteslist-buttons` and made public; `v1.0.0` tagged (2026-09-23).
+- Repository request posted in Bitfocus Slack (2026-09-23): GitHub user `nicksolyom`, module `thenoteslist-buttons`,
+  asking whether the org repo can be linked as-is or must move/fork into the bitfocus org. Awaiting reply.
+
+Still open: Bitfocus's answer on the repo; then Submit Version `v1.0.0` in the developer portal.
+
+(Earlier list, for reference: renaming the GitHub repo, making it public, the tag, the Slack request and the portal submission.)
 
 ## Suggested order
 
