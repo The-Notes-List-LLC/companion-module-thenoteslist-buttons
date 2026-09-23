@@ -188,14 +188,17 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       },
       onLive: (num) => {
         const changed = num !== this.liveCue
+        // Measure the offset against the OLD live cue, before it moves.
+        const steps = this.config.eosKeepOffset && this.cursorIndex !== null ? this.baseOffset() : 0
         this.liveCue = num
         if (changed) {
           const label = this.eos?.labelOf(num) ?? ''
           this.log('info', `Live cue ${num}${label ? ` ${label}` : ''}`)
           if (this.config.eosKeepOffset && this.cursorIndex !== null) {
-            const offset = this.cursorOffset()
+            // Hold the offset in BASE CUES, not indexes: parts occupy indexes,
+            // so an index offset would land on a part of the wrong cue.
             const liveIdx = this.cues.find((c) => c.number === num && c.part === 0)?.index
-            this.cursorIndex = liveIdx !== undefined ? Math.max(0, liveIdx + offset) : null
+            this.cursorIndex = liveIdx !== undefined ? this.walkBaseCues(liveIdx, steps) : null
           } else {
             this.cursorIndex = null // follow live
           }
@@ -220,6 +223,24 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   /** Sheet index the cursor points at: stepped, else live. */
   private cursorPos(): number | null {
     return this.cursorIndex !== null ? this.cursorIndex : this.liveIndex()
+  }
+
+  /** Base cues between live and the cursor (negative = earlier), ignoring parts. */
+  private baseOffset(): number {
+    const pos = this.cursorPos()
+    const live = this.liveIndex()
+    if (pos === null || live === null || pos === live) return 0
+    const lo = Math.min(pos, live), hi = Math.max(pos, live)
+    const n = this.cues.filter((c) => c.index > lo && c.index <= hi && c.part === 0).length
+    return pos < live ? -n : n
+  }
+
+  /** Index reached by moving `steps` base cues from `from` (parts skipped), clamped to the cache. */
+  private walkBaseCues(from: number, steps: number): number {
+    const bases = this.cues.filter((c) => c.part === 0).map((c) => c.index)
+    const i = bases.indexOf(from)
+    if (i < 0) return from
+    return bases[Math.max(0, Math.min(bases.length - 1, i + steps))]
   }
 
   private cursorOffset(): number {
