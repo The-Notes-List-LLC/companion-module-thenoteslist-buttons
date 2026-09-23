@@ -179,7 +179,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       return
     }
     this.eos = new EosReader(host, !!this.config.eosUseSlip, Number(this.config.eosCueList) || 1, {
-      onStatus: (connected) => {
+      onStatus: (connected, message) => {
+        this.log('debug', `Eos status: ${connected ? 'connected' : 'disconnected'} (${message})`)
         this.setVariableValues({ eos_connected: connected ? 'true' : 'false' })
         this.checkFeedbacks('eos_connected')
       },

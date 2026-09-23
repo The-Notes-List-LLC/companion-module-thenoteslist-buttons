@@ -145,6 +145,9 @@ export class EosReader {
       if (this.connected) this.ev.log('warn', `Eos: ${err.message}`)
     })
     socket.on('close', () => {
+      // A reader stopped by a config re-save must not report "disconnected"
+      // after its replacement has already connected.
+      if (this.closed || this.socket !== socket) return
       const was = this.connected
       this.connected = false
       if (was) this.ev.log('warn', 'Eos: connection closed')
