@@ -1,5 +1,5 @@
 {
-  "name": "companion-module-thenoteslist",
+  "name": "companion-module-thenoteslist-buttons",
   "version": "0.1.0",
   "description": "Bitfocus Companion module for The Notes List — create and close notes, live outstanding counts, from any Companion surface (Stream Deck, X-keys, MIDI, phone).",
   "main": "dist/main.js",
@@ -7,7 +7,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/The-Notes-List-LLC/companion-module-thenoteslist.git"
+    "url": "https://github.com/The-Notes-List-LLC/companion-module-thenoteslist-buttons.git"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

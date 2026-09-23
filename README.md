@@ -1,4 +1,4 @@
-# companion-module-thenoteslist
+# companion-module-thenoteslist-buttons
 
 Bitfocus Companion module for [The Notes List](https://thenoteslist.com). Spec: The-Notes-List-LLC/thenoteslist#910.
 

@@ -48,7 +48,11 @@ Nothing below has been applied here; the working tree was left as found.
 - `pkg/` and `*.tgz` gitignored and untracked.
 - manifest runtime node22, apiVersion 1.14.1; `npm run package` builds clean.
 
-Still open: the two-segment name, making the repo public, the tag, the Slack request and the portal submission.
+- Name chosen: `thenoteslist-buttons` (matches the app's "Button stations"). package.json, manifest id/name/shortname
+  (with `legacyIds: ["thenoteslist"]`), products `Button Stations`, README and repo URLs updated; the GitHub repo
+  itself still has to be renamed to `companion-module-thenoteslist-buttons`.
+
+Still open: renaming the GitHub repo, making it public, the tag, the Slack request and the portal submission.
 
 ## Suggested order
 

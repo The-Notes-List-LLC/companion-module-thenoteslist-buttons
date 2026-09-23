@@ -1,14 +1,21 @@
 {
-  "id": "thenoteslist",
-  "name": "thenoteslist",
-  "shortname": "notes-list",
-  "description": "The Notes List — production notes for lighting and stage management. Create notes, close the last one, and show outstanding counts per module.",
+  "id": "thenoteslist-buttons",
+  "name": "thenoteslist-buttons",
+  "shortname": "thenoteslist-buttons",
+  "description": "The Notes List button stations: open prefilled notes, work the notes list, and see open counts per module from any Companion surface. Follows the ETC Eos live cue (read-only) so notes land on the right cue.",
   "version": "0.1.0",
   "license": "MIT",
-  "repository": "https://github.com/The-Notes-List-LLC/companion-module-thenoteslist",
-  "bugs": "https://github.com/The-Notes-List-LLC/companion-module-thenoteslist/issues",
-  "maintainers": [{ "name": "The Notes List LLC", "email": "support@thenoteslist.com" }],
-  "legacyIds": [],
+  "repository": "https://github.com/The-Notes-List-LLC/companion-module-thenoteslist-buttons",
+  "bugs": "https://github.com/The-Notes-List-LLC/companion-module-thenoteslist-buttons/issues",
+  "maintainers": [
+    {
+      "name": "The Notes List LLC",
+      "email": "support@thenoteslist.com"
+    }
+  ],
+  "legacyIds": [
+    "thenoteslist"
+  ],
   "runtime": {
     "type": "node22",
     "api": "nodejs-ipc",
@@ -16,6 +23,17 @@
     "entrypoint": "../dist/main.js"
   },
   "manufacturer": "The Notes List",
-  "products": ["The Notes List"],
-  "keywords": ["theatre", "lighting", "notes", "stage management", "cue notes"]
+  "products": [
+    "Button Stations"
+  ],
+  "keywords": [
+    "theatre",
+    "lighting",
+    "notes",
+    "stage management",
+    "cue notes",
+    "eos",
+    "etc",
+    "button station"
+  ]
 }
