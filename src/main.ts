@@ -14,7 +14,7 @@ import { StationApi, type ApiError } from './api.js'
 import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig } from './config.js'
 import { EosReader } from './eos.js'
 import { CueCursor } from './cursor.js'
-import { MODULE_COLORS, N_PNG64_DARK, brandedStyle, keyStyle } from './brand.js'
+import { ACTION_COLORS, MODULE_COLORS, N_PNG64_DARK, brandedStyle, keyStyle, tint } from './brand.js'
 
 const MODULES = [
   { id: 'cue', label: 'Cue Notes' },
@@ -304,8 +304,10 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       cue_live_label: this.liveCue === null ? '' : this.eos?.labelOf(this.liveCue) ?? '',
       selected_cue: c?.number ?? '',
       selected_cue_label: c?.label ?? '',
-      // Key faces have room for ~10 characters on a 14 px line.
-      selected_cue_label_short: (c?.label ?? '').toUpperCase().slice(0, 10),
+      // One 14 px line holds ~7 capitals. Clip to that, with hyphens and spaces
+      // as no-break spaces (Companion wraps at both), so a long label is cut on
+      // one line, never wrapped onto a second that pushes the text into the N.
+      selected_cue_label_short: (c?.label ?? '').toUpperCase().replace(/\s*-\s*/g, ' ').replace(/\s+/g, ' ').slice(0, 7).trim().replace(/ /g, '\u00a0'),
       // Base cues from live (parts not counted); ? while that stretch is still loading.
       selected_cue_offset: offset === null ? '?' : String(offset),
     })
@@ -554,7 +556,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       { variableId: 'cue_live_label', name: 'Eos: label of the live cue' },
       { variableId: 'selected_cue', name: 'Selected cue: the cue the next note lands on (live unless you stepped)' },
       { variableId: 'selected_cue_label', name: 'Selected cue label' },
-      { variableId: 'selected_cue_label_short', name: 'Selected cue label, first 10 characters (fits a key face)' },
+      { variableId: 'selected_cue_label_short', name: 'Selected cue label, first 7 characters (fits a key face)' },
       { variableId: 'selected_cue_offset', name: 'Selected cue offset from live (0 = live)' },
       { variableId: 'eos_connected', name: 'Eos desk connected (true/false)' },
     ]
@@ -566,14 +568,13 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   }
 
   /**
-   * One ready-made key per module × type from THIS show: the New note action
-   * with that type, the matching chip colour, and the live cue on the face.
-   */
-  /**
-   * Ready-made keys in the house look (N mark top-left, text right-aligned):
-   *  - New note · <Module>: one per type of THIS show, coloured like the chip
-   *  - Go to module: one per module, module colour
-   *  - Selected cue: ◀ / ▶ / = live and two display keys
+   * Ready-made keys in the house look (N top-left, two lines on the bottom edge):
+   *  1 Selected cue: ◀ / ▶ / = live and a display key
+   *  2 New note · <Module>: one per type of THIS show, coloured like the chip
+   *  3 Highlighted note · <Module>: colour says what the key does
+   *  4 Go to module: module colour, with that module's open count
+   * Companion lists categories alphabetically; the numbers put the tech-time
+   * keys first.
    */
   private buildPresets(): CompanionPresetDefinitions {
     const presets: CompanionPresetDefinitions = {}
@@ -602,60 +603,66 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     for (const m of MODULES) {
       const types = this.options?.[m.id]?.types ?? []
       for (const t of types) {
+        // "ADD / SM": the type is the word that tells keys apart, so no "NOTE"
+        // filler. One size for every ADD key so a row of them lines up.
+        const abbr = short(t.value, t.label)
         presets[`new_${m.id}_${t.value}`] = {
           type: 'button',
-          category: `New note · ${m.label}`,
+          category: `2 · New note · ${m.label}`,
           name: `${t.label} (${m.label})`,
-          style: brandedStyle(`ADD\n${short(t.value, t.label)}\nNOTE`, t.color ?? MODULE_COLORS[m.id], 18),
+          style: brandedStyle(`ADD\n${abbr}`, t.color ?? MODULE_COLORS[m.id]),
           steps: [{ down: [{ actionId: 'open_note_editor', options: { module: m.id, [`type_${m.id}`]: t.value, [`priority_${m.id}`]: 'medium', cueNumber: cueVar } }], up: [] }],
           feedbacks: [],
         }
       }
       presets[`goto_${m.id}`] = {
         type: 'button',
-        category: 'Go to module',
+        category: '4 · Go to module',
         name: `Go to ${m.label}`,
-        // Same grammar as the note keys: two short words, module colour, N in the corner.
-        // Fixed 18 px: two lines auto-size large enough to run into the N.
-        style: brandedStyle(`${({ cue: 'CUE', work: 'WORK', production: 'PROD', electrician: 'ELEC' } as Record<string, string>)[m.id]}\nNOTES`, MODULE_COLORS[m.id], 18),
+        // Module colour and the module's open count ("WORK / 3 OPEN").
+        style: brandedStyle(`${({ cue: 'CUE', work: 'WORK', production: 'PROD', electrician: 'ELEC' } as Record<string, string>)[m.id]}\n$(${L}:${m.id}_outstanding) OPEN`, MODULE_COLORS[m.id]),
         steps: [{ down: [{ actionId: 'tab_jump_module', options: { module: m.id } }], up: [] }],
         feedbacks: [],
       }
     }
 
-    // Working the list in the open tab: one category per module, module colour.
+    // Working the list in the open tab. Colour says what a key DOES: green
+    // completes, red cancels, slate sends to review. Everything else is a dark
+    // key whose text carries the module colour, so a NEXT for Work still reads
+    // as Work and nothing looks like a status change that is not one.
     for (const m of MODULES) {
-      const cat = `Highlighted note · ${m.label}`
-      const hex = MODULE_COLORS[m.id]
-      const key = (id: string, name: string, face: string, actionId: string, options: Record<string, string>, align: 'right:center' | 'right:bottom' = 'right:center') => {
-        presets[`${id}_${m.id}`] = { type: 'button', category: cat, name: `${name} (${m.label})`, style: brandedStyle(face, hex, 18, align), steps: [{ down: [{ actionId, options }], up: [] }], feedbacks: [] }
+      const cat = `3 · Highlighted note · ${m.label}`
+      const mod = tint(MODULE_COLORS[m.id], 0.4) // module colour, lifted so it reads on the dark key
+      const key = (id: string, name: string, face: string, bg: string, text: string | undefined, actionId: string, options: Record<string, string>) => {
+        presets[`${id}_${m.id}`] = { type: 'button', category: cat, name: `${name} (${m.label})`, style: brandedStyle(face, bg, 18, text), steps: [{ down: [{ actionId, options }], up: [] }], feedbacks: [] }
       }
-      key('next', 'Highlight next note', 'NEXT\nNOTE', 'tab_next_note', { module: m.id })
-      key('prev', 'Highlight previous note', 'PREV\nNOTE', 'tab_prev_note', { module: m.id })
-      key('done', 'Mark highlighted note complete', 'SET\nDONE', 'tab_set_highlighted_status', { module: m.id, status: 'complete' })
-      key('cancel', 'Mark highlighted note cancelled', 'SET\nCANCL', 'tab_set_highlighted_status', { module: m.id, status: 'cancelled' })
-      if (m.id === 'work') key('review', 'Mark highlighted note in review', 'SET\nREVW', 'tab_set_highlighted_status', { module: m.id, status: 'review' })
-      key('todo', 'Highlighted note back to To Do', 'SET\nTO DO', 'tab_set_highlighted_status', { module: m.id, status: 'todo' })
-      key('undo', 'Undo', 'UNDO', 'tab_undo', { module: m.id }, 'right:bottom')
-      key('redo', 'Redo', 'REDO', 'tab_redo', { module: m.id }, 'right:bottom')
+      const { done, cancel, review, neutral } = ACTION_COLORS
+      key('next', 'Highlight next note', 'NEXT\nNOTE', neutral, mod, 'tab_next_note', { module: m.id })
+      key('prev', 'Highlight previous note', 'PREV\nNOTE', neutral, mod, 'tab_prev_note', { module: m.id })
+      key('done', 'Mark highlighted note complete', 'SET\nDONE', done, undefined, 'tab_set_highlighted_status', { module: m.id, status: 'complete' })
+      key('cancel', 'Mark highlighted note cancelled', 'SET\nCANCL', cancel, undefined, 'tab_set_highlighted_status', { module: m.id, status: 'cancelled' })
+      if (m.id === 'work') key('review', 'Mark highlighted note in review', 'SET\nREVW', review, undefined, 'tab_set_highlighted_status', { module: m.id, status: 'review' })
+      key('todo', 'Highlighted note back to To Do', 'SET\nTO DO', neutral, mod, 'tab_set_highlighted_status', { module: m.id, status: 'todo' })
+      key('undo', 'Undo', 'UNDO', neutral, mod, 'tab_undo', { module: m.id })
+      key('redo', 'Redo', 'REDO', neutral, mod, 'tab_redo', { module: m.id })
     }
 
     // Selected-cue keys follow the same grammar: one short word, one number, the
     // N in the corner. Dark keys; amber while the selection is off the live cue.
-    // Bottom-aligned where the first word is wide, so it clears the N.
     // Fixed 18 px: with 'auto' an empty cue line (no desk yet) lets the lone word
     // inflate and break mid-word ("LIV / E").
-    const dark = '#1f1f1f'
+    const dark = ACTION_COLORS.neutral
+    const sel = '1 · Selected cue'
     const amber = { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0), png64: N_PNG64_DARK }
     const offLive = { feedbackId: 'selected_cue_off_live', options: {}, style: amber }
     // LIVE is green only while the selection IS the live cue; stepped away it
     // stays dark (the ◀ / ▶ keys go amber). Without a desk it says so in grey.
     const onLive = { feedbackId: 'selected_cue_on_live', options: {}, style: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) } }
     const noDesk = { feedbackId: 'eos_connected', options: {}, isInverted: true, style: { text: 'NO\nDESK', color: combineRgb(128, 128, 128) } }
-    presets.selected_prev = { type: 'button', category: 'Selected cue', name: 'Selected cue ◀', style: brandedStyle(`◀ CUE\n${cueVar}`, dark, 18, 'right:bottom'), steps: [{ down: [{ actionId: 'selected_cue_prev', options: {} }], up: [] }], feedbacks: [offLive] }
-    presets.selected_next = { type: 'button', category: 'Selected cue', name: 'Selected cue ▶', style: brandedStyle(`CUE ▶\n${cueVar}`, dark, 18, 'right:bottom'), steps: [{ down: [{ actionId: 'selected_cue_next', options: {} }], up: [] }], feedbacks: [offLive] }
-    presets.selected_live = { type: 'button', category: 'Selected cue', name: 'Selected cue = live', style: brandedStyle(`LIVE\n$(${L}:cue_live)`, dark, 18), steps: [{ down: [{ actionId: 'selected_cue_live', options: {} }], up: [] }], feedbacks: [onLive, noDesk] }
-    presets.display_selected = { type: 'button', category: 'Selected cue', name: 'Display: selected cue (number and label)', style: brandedStyle(`NOTE\n${cueVar}\n$(${L}:selected_cue_label_short)`, '#000000', 14, 'right:bottom'), steps: [{ down: [], up: [] }], feedbacks: [offLive] }
+    presets.selected_prev = { type: 'button', category: sel, name: 'Selected cue ◀', style: brandedStyle(`◀ CUE\n${cueVar}`, dark), steps: [{ down: [{ actionId: 'selected_cue_prev', options: {} }], up: [] }], feedbacks: [offLive] }
+    presets.selected_next = { type: 'button', category: sel, name: 'Selected cue ▶', style: brandedStyle(`CUE ▶\n${cueVar}`, dark), steps: [{ down: [{ actionId: 'selected_cue_next', options: {} }], up: [] }], feedbacks: [offLive] }
+    presets.selected_live = { type: 'button', category: sel, name: 'Selected cue = live', style: brandedStyle(`LIVE\n$(${L}:cue_live)`, dark), steps: [{ down: [{ actionId: 'selected_cue_live', options: {} }], up: [] }], feedbacks: [onLive, noDesk] }
+    presets.display_selected = { type: 'button', category: sel, name: 'Display: selected cue (number and label)', style: brandedStyle(`NOTE\n${cueVar}\n$(${L}:selected_cue_label_short)`, '#000000', 14), steps: [{ down: [], up: [] }], feedbacks: [offLive] }
     return presets
   }
 

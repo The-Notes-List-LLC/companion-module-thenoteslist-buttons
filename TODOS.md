@@ -114,16 +114,16 @@ Scores: hierarchy 3, colour meaning 3, error-proofing 3, consistency 4, legibili
 
 ### Fixes
 
-- [ ] **Action colours on Highlighted-note keys.** All are module purple, so SET CANCL looks like NEXT NOTE. Green (#16a34a) Done, red (#dc2626) Cancel, neutral dark (#1f1f1f) for next/prev/undo/redo/To Do. (`src/main.ts:580-594`)
-- [ ] **Text collides with the N** on Go-to keys (WORK / PROD / ELEC NOTES) and NEXT / PREV NOTE. Apply the bottom-align rule from `brand.ts`, or drop the N on those keys. (`src/main.ts:573,586-587`)
-- [ ] **"ADD ___ NOTE" spends 2 of 3 lines on filler.** Make the type word (SM, DIR) 24px with a small "ADD" label; drop "NOTE". (`src/main.ts:562`)
+- [x] **Action colours on Highlighted-note keys.** All are module purple, so SET CANCL looks like NEXT NOTE. Green (#16a34a) Done, red (#dc2626) Cancel, neutral dark (#1f1f1f) for next/prev/undo/redo/To Do. (`src/main.ts:580-594`)
+- [x] **Text collides with the N** on Go-to keys (WORK / PROD / ELEC NOTES) and NEXT / PREV NOTE. Apply the bottom-align rule from `brand.ts`, or drop the N on those keys. (`src/main.ts:573,586-587`)
+- [x] **"ADD ___ NOTE" spends 2 of 3 lines on filler.** Make the type word (SM, DIR) 24px with a small "ADD" label; drop "NOTE". (`src/main.ts:562`)
 - [x] **LIVE key green means "Eos connected", not "on the live cue".** Green only when on live; grey "NO DESK" when the desk is offline. (`src/main.ts:604,607`)
-- [ ] **Baselines jump across a row.** UNDO / REDO are `right:bottom` beside centred keys; put every key on one baseline. (`src/main.ts:592-593`)
-- [ ] **NOTE display key**: 14px label unreadable at booth distance, and it looks pressable. 12px "NOTE ON" label, 24px number, outline style so it reads as a display. (`src/main.ts:608`)
+- [x] **Baselines jump across a row.** UNDO / REDO are `right:bottom` beside centred keys; put every key on one baseline. (`src/main.ts:592-593`)
+- [~] **NOTE display key** (partial: the label is clipped to 7 characters with no-break spaces so it never wraps into the N; a two-size face needs Companion 5 layered elements): 14px label unreadable at booth distance, and it looks pressable. 12px "NOTE ON" label, 24px number, outline style so it reads as a display. (`src/main.ts:608`)
 - [ ] **Chip colours can clash with module colours** (ADD SM / ADD PROG ≈ Cue purple; ADD PROD grey ≈ empty keys). Darken a chip colour that sits within a small ΔE of a module or action colour. (`src/brand.ts` `keyStyle`)
-- [ ] **Preset category order is alphabetical**, burying Selected cue. Prefix: "1 · Selected cue", "2 · New note · …", "3 · Highlighted note · …", "4 · Go to module".
-- [ ] **Go-to keys could show outstanding counts** (`$(…:work_outstanding)`, red when > 0); variables and feedback already exist.
-- [ ] Consider Companion 5 layered drawing for presets — needs a module SDK upgrade past 1.12 first.
+- [x] **Preset category order is alphabetical**, burying Selected cue. Prefix: "1 · Selected cue", "2 · New note · …", "3 · Highlighted note · …", "4 · Go to module".
+- [x] **Go-to keys could show outstanding counts** (`$(…:work_outstanding)`, red when > 0); variables and feedback already exist.
+- [ ] Two text sizes on one key (small verb label over a big word, per the key-face proposal) need Companion 5 layered elements; pre-rendering labels into png64 would not match Companion's font. Consider Companion 5 layered drawing for presets — needs a module SDK upgrade past 1.12 first.
 
 ### Key-face system (proposal)
 

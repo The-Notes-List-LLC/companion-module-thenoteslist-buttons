@@ -33,17 +33,41 @@ function parseBg(hex: string): { bgcolor: number; light: boolean } {
   return { bgcolor: combineRgb(r, g, b), light: luminance > 0.6 }
 }
 
-/** The house key look: N in the top-left, text right-aligned, no Companion top bar.
- * Two-line keys whose first word is wider than ~4 characters (◀ CUE, NOTE) sit
- * at the bottom so the words clear the mark; three-line keys fill the key and
- * their short first word (ADD) already clears it. */
-export function brandedStyle(text: string, hex: string, size: 'auto' | 14 | 18 | 24 = 'auto', alignment: 'right:center' | 'right:bottom' = 'right:center') {
-  // 'auto' shrinks long words instead of wrapping them mid-word.
+/** Mix a hex colour toward white by `amount` (0-1); for coloured text on dark keys. */
+export function tint(hex: string, amount: number): string {
+  const h = hex.replace('#', '')
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  return '#' + [0, 2, 4].map((i) => {
+    const v = parseInt(full.slice(i, i + 2), 16)
+    return Math.round(v + (255 - v) * amount).toString(16).padStart(2, '0')
+  }).join('')
+}
+
+/** Action colours: what the key DOES, which outranks the module colour. */
+export const ACTION_COLORS = {
+  done: '#16a34a',
+  cancel: '#dc2626',
+  review: '#475569',
+  /** Navigation and neutral keys: next/prev, undo/redo, back to To Do, cue keys. */
+  neutral: '#1f1f1f',
+}
+
+/**
+ * The house key look: N in the top-left, text right-aligned on the BOTTOM edge
+ * of every key so a row of keys shares one baseline, no Companion top bar.
+ * Keep faces to two lines: at 18 px two bottom-aligned lines clear the N
+ * whatever their width; 24 px only for words of three characters or fewer.
+ * `textHex` overrides the text colour (dark nav keys carry the module colour
+ * in their text so a NEXT for Work still reads as Work).
+ */
+export function brandedStyle(text: string, hex: string, size: 'auto' | 14 | 18 | 24 = 18, textHex?: string) {
+  const base = keyStyle(hex)
   return {
     text,
     size,
-    ...keyStyle(hex),
-    alignment,
+    ...base,
+    color: textHex ? keyStyle(textHex).bgcolor : base.color,
+    alignment: 'right:bottom' as const,
     png64: parseBg(hex).light ? N_PNG64_DARK : N_PNG64,
     pngalignment: 'center:center' as const,
     show_topbar: false,

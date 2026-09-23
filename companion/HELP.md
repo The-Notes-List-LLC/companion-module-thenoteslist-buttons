@@ -33,7 +33,14 @@ Everything acts on **your own open browser tab** of The Notes List, on the page 
 
 ## Presets
 
-Under **Presets**: one key per note type of your show ("New note · Cue Notes" → ADD CUE NOTE, ADD SM NOTE…) in the house look (N mark, chip colour), a **Go to module** key per module, a **Highlighted note** set per module (next, previous, set Done / Cancel / Review / To Do, undo, redo), and the **Selected cue** keys. Drag them onto the deck.
+Under **Presets**, in the order you reach for them in tech:
+
+1. **Selected cue**: ◀ CUE, CUE ▶, = live and a display key (amber while stepped off live; = live is green on the live cue and reads NO DESK without one).
+2. **New note · <module>**: one key per note type of your show (ADD / CUE, ADD / SM…) in the type's chip colour.
+3. **Highlighted note · <module>**: colour says what a key does. SET DONE is green, SET CANCL red, SET REVW (Work Notes) slate; NEXT, PREV, TO DO, UNDO and REDO are dark keys lettered in the module colour.
+4. **Go to module**: module colour, with that module's open count (WORK / 3 OPEN).
+
+Every key keeps its text on the bottom edge, clear of the N, so a row of keys lines up. Drag them onto the deck. Keys dragged from an earlier version keep their old look: drag them again to pick up a new one.
 
 ## Feedbacks
 
@@ -46,4 +53,4 @@ Under **Presets**: one key per note type of your show ("New note · Cue Notes" �
 
 `$(<connection label>:cue_outstanding)`, `work_outstanding`, `production_outstanding`, `electrician_outstanding`, `station_name`, `production_name`, `pairing_code`, `connected`.
 
-Eos: `cue_live`, `cue_live_label`, `selected_cue`, `selected_cue_label`, `selected_cue_label_short` (10 characters, for a key face), `selected_cue_offset` (base cues from live, parts not counted; 0 = live, ? while loading), `eos_connected`.
+Eos: `cue_live`, `cue_live_label`, `selected_cue`, `selected_cue_label`, `selected_cue_label_short` (7 characters, for a key face), `selected_cue_offset` (base cues from live, parts not counted; 0 = live, ? while loading), `eos_connected`.
