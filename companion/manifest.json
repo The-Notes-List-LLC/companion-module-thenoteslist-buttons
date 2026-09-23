@@ -3,7 +3,7 @@
   "name": "thenoteslist-buttons",
   "shortname": "thenoteslist-buttons",
   "description": "The Notes List button stations: open prefilled notes, work the notes list, and see open counts per module from any Companion surface. Follows the ETC Eos live cue (read-only) so notes land on the right cue.",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "license": "MIT",
   "repository": "https://github.com/The-Notes-List-LLC/companion-module-thenoteslist-buttons",
   "bugs": "https://github.com/The-Notes-List-LLC/companion-module-thenoteslist-buttons/issues",
