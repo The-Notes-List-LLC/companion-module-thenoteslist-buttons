@@ -21,6 +21,7 @@
  * current active/pending cue once on connect.
  */
 import osc from 'osc'
+import type { CueSheet } from './cursor.js'
 import type { OscBundle, OscMessage, TCPSocketPort as TCPSocketPortType } from 'osc'
 const { TCPSocketPort } = osc
 
@@ -35,8 +36,8 @@ export interface EosCue {
 export interface EosReaderEvents {
   onStatus: (connected: boolean, message: string) => void
   onLive: (cueNumber: string) => void
-  /** The cache changed: cues known so far, sorted by index. */
-  onCache: (cues: EosCue[], count: number) => void
+  /** The cache changed (read it through the CueSheet methods). */
+  onCache: () => void
   log: (level: 'info' | 'warn' | 'error' | 'debug', msg: string) => void
 }
 
@@ -51,13 +52,16 @@ const RECONNECT_MS = 5000
 const PING_MS = 5000
 const SILENCE_MS = 12000
 
-export class EosReader {
+export class EosReader implements CueSheet {
   private socket: TCPSocketPortType | null = null
   private connected = false
   private closed = false
   private reconnectTimer: NodeJS.Timeout | null = null
-  private count = 0
+  /** Records in the list (base cues plus parts), as the desk last reported. */
+  count = 0
   private byIndex: Map<number, EosCue> = new Map()
+  /** Base cues by number, kept in step with byIndex (O(1) lookups for the cursor and labels). */
+  private baseByNumber: Map<string, EosCue> = new Map()
   private queue: string[] = [] // high priority: window around live / cursor
   private background: string[] = [] // low priority: the full-list walk
   private queued: Set<string> = new Set()
@@ -99,13 +103,34 @@ export class EosReader {
 
   /** Label of a base cue: from the indexed cache, else from a by-number reply. */
   labelOf(number: string): string {
-    for (const c of this.byIndex.values()) if (c.number === number && c.part === 0) return c.label
-    return this.labels.get(number) ?? ''
+    return this.baseByNumber.get(number)?.label ?? this.labels.get(number) ?? ''
   }
 
-  /** Cues known so far, in sheet order. */
-  cache(): EosCue[] {
-    return [...this.byIndex.values()].sort((a, b) => a.index - b.index)
+  at(index: number): EosCue | undefined {
+    return this.byIndex.get(index)
+  }
+
+  indexOf(number: string): number | undefined {
+    return this.baseByNumber.get(number)?.index
+  }
+
+  private putCue(cue: EosCue): void {
+    const old = this.byIndex.get(cue.index)
+    if (old) this.dropCue(cue.index)
+    this.byIndex.set(cue.index, cue)
+    if (cue.part === 0) this.baseByNumber.set(cue.number, cue)
+  }
+
+  private dropCue(index: number): void {
+    const old = this.byIndex.get(index)
+    if (!old) return
+    this.byIndex.delete(index)
+    if (old.part === 0 && this.baseByNumber.get(old.number) === old) this.baseByNumber.delete(old.number)
+  }
+
+  private clearCues(): void {
+    this.byIndex.clear()
+    this.baseByNumber.clear()
   }
 
   /** Make sure indexes [from, to] are cached (fetches the missing ones, spaced out, ahead of the walk). */
@@ -119,7 +144,7 @@ export class EosReader {
 
   /** Walk the entire list at low priority (after connect, or on demand after edits on the desk). */
   reloadList(): void {
-    this.byIndex.clear()
+    this.clearCues()
     this.background = []
     this.walkAnnounced = false
     this.walkRetried = false
@@ -144,7 +169,7 @@ export class EosReader {
       this.subscribed = false
       // A fresh session: forget everything the last one had in flight, or the
       // walk thinks it already finished and never retries what went unanswered.
-      this.byIndex.clear()
+      this.clearCues()
       this.queue = []
       this.background = []
       this.queued.clear()
@@ -271,7 +296,7 @@ export class EosReader {
     const baseCues = [...this.byIndex.values()].filter((c) => c.part === 0).length
     const parts = this.byIndex.size - baseCues
     this.ev.log('info', `Eos: cue list walk complete — ${baseCues} cues cached${parts ? ` (+${parts} parts)` : ''}${missing.length ? `, ${missing.length} unanswered` : ''}`)
-    this.ev.onCache(this.cache(), this.count)
+    this.ev.onCache()
   }
 
   private onBundle(bundle: OscBundle): void {
@@ -290,7 +315,7 @@ export class EosReader {
       const num = m[2]
       this.ev.onLive(num)
       // Learn this cue's index (the reply carries it), then warm its neighbours.
-      const known = [...this.byIndex.values()].find((c) => c.number === num && c.part === 0)
+      const known = this.baseByNumber.get(num)
       if (known) this.ensureRange(known.index - WINDOW, known.index + WINDOW)
       else {
         this.wantedByNumber.add(num)
@@ -311,9 +336,9 @@ export class EosReader {
         this.ev.log('info', `Eos: cue count changed ${previous} → ${this.count}; re-reading the list`)
         this.announcedCount = false
         this.walkAnnounced = false
-        this.byIndex.clear()
+        this.clearCues()
       }
-      this.ev.onCache(this.cache(), this.count)
+      this.ev.onCache()
       this.walkRetried = false
       this.walkAll()
       return
@@ -333,14 +358,14 @@ export class EosReader {
         // or it sorts first and the cursor thinks the live cue is at the top.
         if (Number(m[3]) === 0) this.labels.set(m[2], label)
         this.wantedByNumber.delete(m[2])
-        this.ev.onCache(this.cache(), this.count)
+        this.ev.onCache()
         return
       }
       // Parts occupy their own index in the list; keep them so the walk can
       // complete and the cursor can step OVER them.
       const cue: EosCue = { number: m[2], label, index, part: Number(m[3]) }
       const fresh = !this.byIndex.has(index)
-      this.byIndex.set(index, cue)
+      this.putCue(cue)
       if (fresh) {
         // A by-number reply (live cue) has no window yet: warm it.
         if (this.wantedByNumber.delete(cue.number)) this.ensureRange(index - WINDOW, index + WINDOW)
@@ -349,13 +374,13 @@ export class EosReader {
         const complete = this.count > 0 && this.byIndex.size >= this.count
         if (complete || now - this.lastPublish > 500) {
           this.lastPublish = now
-          this.ev.onCache(this.cache(), this.count)
+          this.ev.onCache()
         } else if (!this.publishTimer) {
           // Trailing flush so the LAST record of a burst is never left unpublished.
           this.publishTimer = setTimeout(() => {
             this.publishTimer = null
             this.lastPublish = Date.now()
-            this.ev.onCache(this.cache(), this.count)
+            this.ev.onCache()
           }, 500)
         }
       }
@@ -367,7 +392,7 @@ export class EosReader {
       if (m[1] !== String(this.cueList)) return
       const numbers = (msg.args ?? []).map((x) => String(x.value)).filter((v) => /^[\d.]+$/.test(v))
       for (const n of numbers) {
-        for (const [idx, c] of this.byIndex) if (c.number === n) this.byIndex.delete(idx)
+        for (const [idx, c] of this.byIndex) if (c.number === n) this.dropCue(idx)
         this.enqueue(`/eos/get/cue/${this.cueList}/${n}`)
       }
       this.enqueue(`/eos/get/cue/${this.cueList}/count`)

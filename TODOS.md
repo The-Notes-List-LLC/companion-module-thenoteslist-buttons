@@ -11,9 +11,9 @@ Line numbers refer to that commit.
   - Send `/eos/ping` every 5 s; `socket.close()` if nothing arrives in ~10 s.
 - [x] **`eos_connected` feedback stays green while disconnected.** It returns `cues.length > 0 || liveCue !== null`, neither of which is cleared on close. (`src/main.ts:486`)
   - Drive it from a boolean set by `onStatus`; blank cue variables while disconnected.
-- [ ] **Cursor is stored as a sheet index, not a cue.** An insert/delete on the desk or a reconnect clears `byIndex`; after the re-walk the index points at a different cue and a note goes one cue off with no warning. (`src/main.ts:60`, `src/eos.ts:137,262`)
+- [x] **Cursor is stored as a sheet index, not a cue.** An insert/delete on the desk or a reconnect clears `byIndex`; after the re-walk the index points at a different cue and a note goes one cue off with no warning. (`src/main.ts:60`, `src/eos.ts:137,262`)
   - Store the cursor as a cue number (plus offset hint) and resolve the index on demand.
-- [ ] **Stepping onto an uncached index falls back to the live cue** while `selected_cue_offset` is non-zero, and New note uses the live cue. (`src/main.ts:263,267,281-282`)
+- [x] **Stepping onto an uncached index falls back to the live cue** while `selected_cue_offset` is non-zero, and New note uses the live cue. (`src/main.ts:263,267,281-282`)
   - Show `selected_cue` as blank / "…" while the target loads instead of falling back to live.
 - [x] **Pairing success never started the paired session.** Companion saves a module's own `saveConfig` with `skipNotifyConnection`, so `configUpdated` never ran: status stayed "PAIR CODE…" and nothing polled until restart. Fixed: `pollPairing` calls `configUpdated` itself; the Eos reader only restarts when desk settings change.
 
@@ -33,9 +33,9 @@ Line numbers refer to that commit.
 ### Low
 
 - [ ] Duplicate desk requests: background entries are never in `queued`, so an index enqueued at high priority while still in `background` is sent twice. Check `byIndex.has(i)` in `drain`. (`src/eos.ts:182-195`)
-- [ ] `cues` getter copies and sorts the whole map on every call (several per `publishCursor` / feedback check); `labelOf` is a linear scan. Cache a sorted array plus a number→index map, rebuilt on cache change. (`src/main.ts:54`, `src/eos.ts:93-101`)
-- [ ] `selected_cue_offset` counts indexes (parts included) but keep-offset counts base cues; one step over a part shows 2. Use `baseOffset()`. (`src/main.ts:246-250`)
-- [ ] Forward step can come to rest on a part at the end of the list (`next < max` guard). (`src/main.ts:263`)
+- [x] `cues` getter copies and sorts the whole map on every call (several per `publishCursor` / feedback check); `labelOf` is a linear scan. Cache a sorted array plus a number→index map, rebuilt on cache change. (`src/main.ts:54`, `src/eos.ts:93-101`)
+- [x] `selected_cue_offset` counts indexes (parts included) but keep-offset counts base cues; one step over a part shows 2. Use `baseOffset()`. (`src/main.ts:246-250`)
+- [x] Forward step can come to rest on a part at the end of the list (`next < max` guard). (`src/main.ts:263`)
 - [ ] Verify OSC framing on port 3032: the `osc` library's `TCPSocketPort` always SLIP-encodes what it sends (it extends `SLIPPort`); `useSLIP: false` only changes decoding. Eos documents 3032 as OSC 1.0 length-prefixed. It works against the desk today, so check whether Eos tolerates it or the "Use TCP SLIP" box is what's in use. Seen while testing with a fake desk.
 - [ ] `describe()` shows "fetch failed" and drops `e.cause.code` (ENOTFOUND, ECONNREFUSED…). (`src/main.ts:657`)
 
@@ -50,7 +50,7 @@ Line numbers refer to that commit.
 
 ### Tests (none exist)
 
-- [ ] Add vitest with fake timers.
+- [x] Add vitest with fake timers.
 - [ ] Inject a socket factory into `EosReader` so tests can script OSC in and record what's sent. Cover:
   - by-number reply at index -1 is never cached
   - count change triggers a re-walk
@@ -58,7 +58,7 @@ Line numbers refer to that commit.
   - reconnect resets state
   - live-cue window requests go before background
   - no duplicate sends
-- [ ] Extract the cursor into a pure `CueCursor` class and test:
+- [x] Extract the cursor into a pure `CueCursor` class and test:
   - stepping over parts both ways, and bounds
   - keep-offset across parts
   - uncached targets
@@ -73,7 +73,12 @@ Line numbers refer to that commit.
 
 - [ ] One HTTP scheduler: one call in flight, per-request timeout, backoff on errors, generation token so config changes cancel superseded runs.
 - [x] Explicit Eos health: ping with deadline; a single connected flag drives variables and feedbacks.
-- [ ] Reader exposes an indexed view (sorted array + number map) rebuilt only on cache change.
+- [x] Reader exposes an indexed view (sorted array + number map) rebuilt only on cache change.
+
+## App side (thenoteslist repo)
+
+- [ ] **Button stations page doesn't refresh when a station collects its token.** After pairing, the page kept saying "waiting for Companion" until a manual reload, although the module had paired (log: "Paired as …") and was polling. Seen 2026-09-23. It should poll or subscribe until the pair is claimed.
+- [ ] Starting a second pairing from the same Companion connection revokes the first station (the module revokes its old token on purpose). Consider showing "replaced by a new pairing" instead of a bare revoked row.
 
 ## Features (CEO review)
 

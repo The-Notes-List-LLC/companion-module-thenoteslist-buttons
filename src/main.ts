@@ -12,7 +12,8 @@ import {
 import { randomUUID } from 'node:crypto'
 import { StationApi, type ApiError } from './api.js'
 import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig } from './config.js'
-import { EosReader, type EosCue } from './eos.js'
+import { EosReader } from './eos.js'
+import { CueCursor } from './cursor.js'
 import { MODULE_COLORS, N_PNG64_DARK, brandedStyle, keyStyle } from './brand.js'
 
 const MODULES = [
@@ -47,21 +48,15 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   private pairing: { code: string; pollSecret: string; expiresAt: number } | null = null
   private options: ModuleOptions | null = null
   private optionsKey = ''
-  // Cue cursor (#907): the desk's list in sheet order, the live cue, and where
-  // the operator has stepped to. Cursor index is relative to `cues`.
+  // Cue cursor (#907): the desk's list (the reader is the CueSheet), the live
+  // cue, and the cue the operator stepped to.
   private eos: EosReader | null = null
   /** Desk settings the running reader was started with. */
   private eosKey = ''
-  /** Live view of the reader's cache (sheet order); never a stale snapshot. */
-  private get cues(): EosCue[] {
-    return this.eos?.cache() ?? []
-  }
-  private cueCount = 0
   /** The reader's socket is up and the desk is answering. */
   private eosConnected = false
   private liveCue: string | null = null
-  /** Sheet index the operator stepped to; null = follow live. */
-  private cursorIndex: number | null = null
+  private cursor = new CueCursor()
 
   async init(config: ModuleConfig): Promise<void> {
     // Never block init on the network: Companion gives init ~10 s and force-restarts
@@ -197,28 +192,15 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         this.setEosConnected(connected)
       },
       onLive: (num) => {
-        const changed = num !== this.liveCue
-        // Measure the offset against the OLD live cue, before it moves.
-        const steps = this.config.eosKeepOffset && this.cursorIndex !== null ? this.baseOffset() : 0
-        this.liveCue = num
-        if (changed) {
+        if (num !== this.liveCue) {
           const label = this.eos?.labelOf(num) ?? ''
           this.log('info', `Live cue ${num}${label ? ` ${label}` : ''}`)
-          if (this.config.eosKeepOffset && this.cursorIndex !== null) {
-            // Hold the offset in BASE CUES, not indexes: parts occupy indexes,
-            // so an index offset would land on a part of the wrong cue.
-            const liveIdx = this.cues.find((c) => c.number === num && c.part === 0)?.index
-            this.cursorIndex = liveIdx !== undefined ? this.walkBaseCues(liveIdx, steps) : null
-          } else {
-            this.cursorIndex = null // follow live
-          }
+          if (this.eos) this.cursor.liveMoved(this.liveCue, num, this.eos, !!this.config.eosKeepOffset)
         }
+        this.liveCue = num
         this.publishCursor()
       },
-      onCache: (_cues, count) => {
-        this.cueCount = count
-        this.publishCursor()
-      },
+      onCache: () => this.publishCursor(),
       log: (level, msg) => this.log(level, msg),
     })
     this.eos.start()
@@ -233,83 +215,47 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.eosConnected = connected
     if (!connected) {
       this.liveCue = null
-      this.cursorIndex = null
+      this.cursor.reset()
     }
     this.setVariableValues({ eos_connected: connected ? 'true' : 'false' })
     this.publishCursor()
     this.checkFeedbacks('eos_connected', 'selected_cue_on_live')
   }
 
-  private liveIndex(): number | null {
-    if (this.liveCue === null) return null
-    const c = this.cues.find((x) => x.number === this.liveCue && x.part === 0)
-    return c ? c.index : null
-  }
-
-  /** Sheet index the cursor points at: stepped, else live. */
-  private cursorPos(): number | null {
-    return this.cursorIndex !== null ? this.cursorIndex : this.liveIndex()
-  }
-
-  /** Base cues between live and the cursor (negative = earlier), ignoring parts. */
-  private baseOffset(): number {
-    const pos = this.cursorPos()
-    const live = this.liveIndex()
-    if (pos === null || live === null || pos === live) return 0
-    const lo = Math.min(pos, live), hi = Math.max(pos, live)
-    const n = this.cues.filter((c) => c.index > lo && c.index <= hi && c.part === 0).length
-    return pos < live ? -n : n
-  }
-
-  /** Index reached by moving `steps` base cues from `from` (parts skipped), clamped to the cache. */
-  private walkBaseCues(from: number, steps: number): number {
-    const bases = this.cues.filter((c) => c.part === 0).map((c) => c.index)
-    const i = bases.indexOf(from)
-    if (i < 0) return from
-    return bases[Math.max(0, Math.min(bases.length - 1, i + steps))]
-  }
-
-  private cursorOffset(): number {
-    const pos = this.cursorPos()
-    const live = this.liveIndex()
-    return pos === null || live === null ? 0 : pos - live
-  }
-
   private stepCursor(delta: number): void {
-    const pos = this.cursorPos()
-    if (pos === null) {
-      this.log('info', this.liveCue === null
-        ? 'Selected cue: the desk has not reported a live cue yet (fire a cue, or check the Eos connection).'
-        : `Selected cue: live cue ${this.liveCue} is not in the cache yet (${this.cues.length}/${this.cueCount} cached); try again in a moment.`)
+    const eos = this.eos
+    if (!eos) return this.log('info', 'Selected cue: no Eos desk configured.')
+    const r = this.cursor.step(delta, eos, this.liveCue)
+    if (!r.ok) {
+      if (r.reason === 'no-live') this.log('info', 'Selected cue: the desk has not reported a live cue yet (fire a cue, or check the Eos connection).')
+      else {
+        // Fetch what is missing on the way; the next press will get through. (A
+        // start cue without an index is already being asked for by number.)
+        if (r.index !== undefined) eos.ensureRange(r.index - 8, r.index + 8)
+        this.log('info', `Selected cue: the cues around ${this.cursor.target(this.liveCue)} are still loading; try again in a moment.`)
+      }
       return
     }
-    const max = this.cueCount > 0 ? this.cueCount - 1 : Number.MAX_SAFE_INTEGER
-    // Step over cue PARTS: they hold an index but are not a place a note lands.
-    let next = Math.max(0, Math.min(max, pos + delta))
-    while (next > 0 && next < max && this.cues.find((c) => c.index === next)?.part) next += delta
-    this.cursorIndex = next
     // Keep the window warm around wherever the cursor goes.
-    this.eos?.ensureRange(next - 8, next + 8)
-    const hit = this.cues.find((c) => c.index === next)
-    this.log('info', `Selected cue → ${hit ? `${hit.number} ${hit.label}`.trim() : `index ${next} (loading)`}`)
+    eos.ensureRange(r.cue.index - 8, r.cue.index + 8)
+    this.log('info', `Selected cue → ${`${r.cue.number} ${r.cue.label}`.trim()}`)
     this.publishCursor()
   }
 
   private resetCursor(): void {
-    this.cursorIndex = null
+    this.cursor.reset()
     this.publishCursor()
   }
 
-  /** The cue a New note should land on: the cursor's cue if cached, else the live cue. */
-  cursorCue(): EosCue | null {
-    const pos = this.cursorPos()
-    const hit = pos === null ? undefined : this.cues.find((c) => c.index === pos)
-    if (hit) return hit
-    return this.liveCue !== null ? { number: this.liveCue, label: this.eos?.labelOf(this.liveCue) ?? '', index: -1, part: 0 } : null
+  /** The cue a New note lands on: the stepped cue, else the live cue. Always a cue number, never a guess. */
+  cursorCue(): { number: string; label: string } | null {
+    const number = this.cursor.target(this.liveCue)
+    return number === null ? null : { number, label: this.eos?.labelOf(number) ?? '' }
   }
 
   private publishCursor(): void {
     const c = this.cursorCue()
+    const offset = this.eos ? this.cursor.offset(this.eos, this.liveCue) : 0
     this.setVariableValues({
       cue_live: this.liveCue ?? '',
       cue_live_label: this.liveCue === null ? '' : this.eos?.labelOf(this.liveCue) ?? '',
@@ -317,7 +263,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       selected_cue_label: c?.label ?? '',
       // Key faces have room for ~10 characters on a 14 px line.
       selected_cue_label_short: (c?.label ?? '').toUpperCase().slice(0, 10),
-      selected_cue_offset: String(this.cursorOffset()),
+      // Base cues from live (parts not counted); ? while that stretch is still loading.
+      selected_cue_offset: offset === null ? '?' : String(offset),
     })
     this.checkFeedbacks('selected_cue_off_live', 'selected_cue_on_live')
   }
@@ -502,14 +449,14 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         name: 'Selected cue is not the live cue',
         defaultStyle: { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) },
         options: [],
-        callback: () => this.cursorOffset() !== 0,
+        callback: () => this.cursor.selected !== null,
       },
       selected_cue_on_live: {
         type: 'boolean',
         name: 'Selected cue is the live cue (desk connected)',
         defaultStyle: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) },
         options: [],
-        callback: () => this.eosConnected && this.liveCue !== null && this.cursorOffset() === 0,
+        callback: () => this.eosConnected && this.liveCue !== null && this.cursor.selected === null,
       },
       eos_connected: {
         type: 'boolean',

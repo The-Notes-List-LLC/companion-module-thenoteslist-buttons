@@ -13,7 +13,8 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "lint": "eslint src",
-    "package": "companion-module-build"
+    "package": "companion-module-build",
+    "test": "vitest run"
   },
   "dependencies": {
     "@companion-module/base": "^1.12.0",
@@ -21,7 +22,8 @@
   },
   "devDependencies": {
     "@companion-module/tools": "^2.8.0",
-    "typescript": "~5.6.0"
+    "typescript": "~5.6.0",
+    "vitest": "^3.2.7"
   },
   "engines": {
     "node": ">=18"
