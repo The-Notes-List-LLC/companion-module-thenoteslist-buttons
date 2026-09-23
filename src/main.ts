@@ -531,7 +531,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
           type: 'button',
           category: `New note · ${m.label}`,
           name: `${t.label} (${m.label})`,
-          style: brandedStyle(`ADD\n${short(t.value, t.label)}\nNOTE`, t.color ?? MODULE_COLORS[m.id], 'auto'),
+          style: brandedStyle(`ADD\n${short(t.value, t.label)}\nNOTE`, t.color ?? MODULE_COLORS[m.id], 18),
           steps: [{ down: [{ actionId: 'open_note_editor', options: { module: m.id, [`type_${m.id}`]: t.value, [`priority_${m.id}`]: 'medium', cueNumber: cueVar } }], up: [] }],
           feedbacks: [],
         }
