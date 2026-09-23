@@ -37,6 +37,7 @@ Line numbers refer to that commit.
 - [x] `selected_cue_offset` counts indexes (parts included) but keep-offset counts base cues; one step over a part shows 2. Use `baseOffset()`. (`src/main.ts:246-250`)
 - [x] Forward step can come to rest on a part at the end of the list (`next < max` guard). (`src/main.ts:263`)
 - [ ] Verify OSC framing on port 3032: the `osc` library's `TCPSocketPort` always SLIP-encodes what it sends (it extends `SLIPPort`); `useSLIP: false` only changes decoding. Eos documents 3032 as OSC 1.0 length-prefixed. It works against the desk today, so check whether Eos tolerates it or the "Use TCP SLIP" box is what's in use. Seen while testing with a fake desk.
+- [ ] One record stays unanswered on some walks (desk reports 1802, walk ends at 824 cues + 977 parts, the one retry doesn't recover it; another walk the same day got all 825). Harmless unless the cursor steps onto it (it then waits, "still loading"). Consider retrying missing indexes again when the cursor reaches them, or logging which index it is.
 - [ ] `describe()` shows "fetch failed" and drops `e.cause.code` (ENOTFOUND, ECONNREFUSED…). (`src/main.ts:657`)
 
 ### Packaging / housekeeping
