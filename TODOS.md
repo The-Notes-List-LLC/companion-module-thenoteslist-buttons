@@ -87,7 +87,6 @@ The job in the booth is "mark this moment on this cue without looking away from 
 
 ### Do next
 
-- [ ] **One-press capture.** Use the unused `createNote()` in `src/api.ts` (it already takes an idempotent id). A press creates a real note on the selected cue with type/priority and a "[needs text] <cue label>" description; text is filled in later. Offer a "Capture" preset beside each ADD key. (S module-side; app needs a draft flag or "needs text" filter — M)
 - [ ] **Show the highlighted note on the deck.** App pushes highlight state back (note id, cue, first ~16 chars, status, priority colour) as variables plus a HIGHLIGHTED display key, so SET DONE isn't pressed blind. (M; needs a tab→station state channel: poll or SSE)
 - [ ] **Success / failure flashes on keys.** Green OK, red FAIL, amber "tab not open". Today a failed or unheard command is silent. (S for create; for tab commands `sent: true` must mean a tab received it — M server-side)
 
@@ -96,13 +95,13 @@ The job in the booth is "mark this moment on this cue without looking away from 
 - [ ] "That last note" key using the unused `setLastStatus()` — cancel or re-prioritise a mis-capture without finding it. (S, endpoint exists)
 - [ ] Priority modifier key (tap to cycle LOW/MED/HIGH, next capture uses it) instead of type × priority presets. (S)
 - [ ] Open-note count for the selected cue on the NOTE key, e.g. "47.5 · 3 open". (M; needs counts-by-cue endpoint)
-- [ ] Offline queue for captures, retried with the same idempotent id. (S–M)
 - [ ] Hold-to-record voice memo, transcribed into the description (via the paired browser tab). (L; audio storage + transcription)
 - [ ] Native QLab reader — only if asked; before grandMA3. (M)
 
 ### Don't build
 
 - More Eos features (multi-list, part targeting, pending cue) before capture works.
+- One-press capture (create the note from the key via `createNote()`, text later). Declined 2026-09-23: the editor-in-tab flow stays the way notes are made.
 - Text entry on the deck (T9, macros).
 - Anything that sends commands to the console — read-only is a selling point; say so in the listing.
 - Presets for every type × priority × module.
