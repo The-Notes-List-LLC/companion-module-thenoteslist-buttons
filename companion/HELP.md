@@ -33,7 +33,7 @@ Everything acts on **your own open browser tab** of The Notes List, on the page 
 
 ## Presets
 
-Under **Presets**: one key per note type of your show ("New note · Cue Notes" → ADD CUE NOTE, ADD SM NOTE…) in the house look (N mark, chip colour), a **Go to module** key per module, and the **Selected cue** keys. Drag them onto the deck.
+Under **Presets**: one key per note type of your show ("New note · Cue Notes" → ADD CUE NOTE, ADD SM NOTE…) in the house look (N mark, chip colour), a **Go to module** key per module, a **Highlighted note** set per module (next, previous, set Done / Cancel / Review / To Do, undo, redo), and the **Selected cue** keys. Drag them onto the deck.
 
 ## Feedbacks
 
@@ -46,4 +46,4 @@ Under **Presets**: one key per note type of your show ("New note · Cue Notes" �
 
 `$(<connection label>:cue_outstanding)`, `work_outstanding`, `production_outstanding`, `electrician_outstanding`, `station_name`, `production_name`, `pairing_code`, `connected`.
 
-Eos: `cue_live`, `cue_live_label`, `selected_cue`, `selected_cue_label`, `selected_cue_offset` (0 = live), `eos_connected`.
+Eos: `cue_live`, `cue_live_label`, `selected_cue`, `selected_cue_label`, `selected_cue_label_short` (10 characters, for a key face), `selected_cue_offset` (0 = live), `eos_connected`.

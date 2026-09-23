@@ -177,7 +177,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     this.eos = null
     const host = (this.config.eosHost || '').trim()
     if (!host) {
-      this.setVariableValues({ eos_connected: 'false', cue_live: '', selected_cue: '', selected_cue_label: '', selected_cue_offset: '0' })
+      this.setVariableValues({ eos_connected: 'false', cue_live: '', selected_cue: '', selected_cue_label: '', selected_cue_label_short: '', selected_cue_offset: '0' })
       return
     }
     this.eos = new EosReader(host, !!this.config.eosUseSlip, Number(this.config.eosCueList) || 1, {
@@ -268,6 +268,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       cue_live_label: this.liveCue === null ? '' : this.eos?.labelOf(this.liveCue) ?? '',
       selected_cue: c?.number ?? '',
       selected_cue_label: c?.label ?? '',
+      // Key faces have room for ~10 characters on a 14 px line.
+      selected_cue_label_short: (c?.label ?? '').toUpperCase().slice(0, 10),
       selected_cue_offset: String(this.cursorOffset()),
     })
     this.checkFeedbacks('selected_cue_off_live')
@@ -482,6 +484,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       { variableId: 'cue_live_label', name: 'Eos: label of the live cue' },
       { variableId: 'selected_cue', name: 'Selected cue: the cue the next note lands on (live unless you stepped)' },
       { variableId: 'selected_cue_label', name: 'Selected cue label' },
+      { variableId: 'selected_cue_label_short', name: 'Selected cue label, first 10 characters (fits a key face)' },
       { variableId: 'selected_cue_offset', name: 'Selected cue offset from live (0 = live)' },
       { variableId: 'eos_connected', name: 'Eos desk connected (true/false)' },
     ]
@@ -550,6 +553,23 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
       }
     }
 
+    // Working the list in the open tab: one category per module, module colour.
+    for (const m of MODULES) {
+      const cat = `Highlighted note · ${m.label}`
+      const hex = MODULE_COLORS[m.id]
+      const key = (id: string, name: string, face: string, actionId: string, options: Record<string, string>, align: 'right:center' | 'right:bottom' = 'right:center') => {
+        presets[`${id}_${m.id}`] = { type: 'button', category: cat, name: `${name} (${m.label})`, style: brandedStyle(face, hex, 18, align), steps: [{ down: [{ actionId, options }], up: [] }], feedbacks: [] }
+      }
+      key('next', 'Highlight next note', 'NEXT\nNOTE', 'tab_next_note', { module: m.id })
+      key('prev', 'Highlight previous note', 'PREV\nNOTE', 'tab_prev_note', { module: m.id })
+      key('done', 'Mark highlighted note complete', 'SET\nDONE', 'tab_set_highlighted_status', { module: m.id, status: 'complete' })
+      key('cancel', 'Mark highlighted note cancelled', 'SET\nCANCL', 'tab_set_highlighted_status', { module: m.id, status: 'cancelled' })
+      if (m.id === 'work') key('review', 'Mark highlighted note in review', 'SET\nREVW', 'tab_set_highlighted_status', { module: m.id, status: 'review' })
+      key('todo', 'Highlighted note back to To Do', 'SET\nTO DO', 'tab_set_highlighted_status', { module: m.id, status: 'todo' })
+      key('undo', 'Undo', 'UNDO', 'tab_undo', { module: m.id }, 'right:bottom')
+      key('redo', 'Redo', 'REDO', 'tab_redo', { module: m.id }, 'right:bottom')
+    }
+
     // Selected-cue keys follow the same grammar: one short word, one number, the
     // N in the corner. Dark keys; amber while the selection is off the live cue.
     // Bottom-aligned where the first word is wide, so it clears the N.
@@ -562,7 +582,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     presets.selected_prev = { type: 'button', category: 'Selected cue', name: 'Selected cue ◀', style: brandedStyle(`◀ CUE\n${cueVar}`, dark, 18, 'right:bottom'), steps: [{ down: [{ actionId: 'selected_cue_prev', options: {} }], up: [] }], feedbacks: [offLive] }
     presets.selected_next = { type: 'button', category: 'Selected cue', name: 'Selected cue ▶', style: brandedStyle(`CUE ▶\n${cueVar}`, dark, 18, 'right:bottom'), steps: [{ down: [{ actionId: 'selected_cue_next', options: {} }], up: [] }], feedbacks: [offLive] }
     presets.selected_live = { type: 'button', category: 'Selected cue', name: 'Selected cue = live', style: brandedStyle(`LIVE\n$(${L}:cue_live)`, dark, 18), steps: [{ down: [{ actionId: 'selected_cue_live', options: {} }], up: [] }], feedbacks: [connected] }
-    presets.display_selected = { type: 'button', category: 'Selected cue', name: 'Display: selected cue', style: brandedStyle(`NOTE\n${cueVar}`, '#000000', 18, 'right:bottom'), steps: [{ down: [], up: [] }], feedbacks: [offLive] }
+    presets.display_selected = { type: 'button', category: 'Selected cue', name: 'Display: selected cue (number and label)', style: brandedStyle(`NOTE\n${cueVar}\n$(${L}:selected_cue_label_short)`, '#000000', 14, 'right:bottom'), steps: [{ down: [], up: [] }], feedbacks: [offLive] }
     return presets
   }
 
