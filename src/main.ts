@@ -60,7 +60,9 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
   private cursorIndex: number | null = null
 
   async init(config: ModuleConfig): Promise<void> {
-    await this.configUpdated(config)
+    // Never block init on the network: Companion gives init ~10 s and force-restarts
+    // the module when the site is slow. Entities are defined synchronously inside.
+    void this.configUpdated(config)
   }
 
   async destroy(): Promise<void> {
@@ -188,8 +190,8 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
         const changed = num !== this.liveCue
         this.liveCue = num
         if (changed) {
-          const c = this.cues.find((x) => x.number === num && x.part === 0)
-          this.log('info', `Live cue ${num}${c?.label ? ` ${c.label}` : ''}`)
+          const label = this.eos?.labelOf(num) ?? ''
+          this.log('info', `Live cue ${num}${label ? ` ${label}` : ''}`)
           if (this.config.eosKeepOffset && this.cursorIndex !== null) {
             const offset = this.cursorOffset()
             const liveIdx = this.cues.find((c) => c.number === num && c.part === 0)?.index
@@ -256,15 +258,14 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     const pos = this.cursorPos()
     const hit = pos === null ? undefined : this.cues.find((c) => c.index === pos)
     if (hit) return hit
-    return this.liveCue !== null ? { number: this.liveCue, label: '', index: -1, part: 0 } : null
+    return this.liveCue !== null ? { number: this.liveCue, label: this.eos?.labelOf(this.liveCue) ?? '', index: -1, part: 0 } : null
   }
 
   private publishCursor(): void {
     const c = this.cursorCue()
-    const live = this.liveCue === null ? undefined : this.cues.find((x) => x.number === this.liveCue && x.part === 0)
     this.setVariableValues({
       cue_live: this.liveCue ?? '',
-      cue_live_label: live?.label ?? '',
+      cue_live_label: this.liveCue === null ? '' : this.eos?.labelOf(this.liveCue) ?? '',
       selected_cue: c?.number ?? '',
       selected_cue_label: c?.label ?? '',
       selected_cue_offset: String(this.cursorOffset()),
@@ -561,7 +562,6 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
     presets.selected_prev = { type: 'button', category: 'Selected cue', name: 'Selected cue ◀', style: brandedStyle(`◀ CUE\n${cueVar}`, dark, 18, 'right:bottom'), steps: [{ down: [{ actionId: 'selected_cue_prev', options: {} }], up: [] }], feedbacks: [offLive] }
     presets.selected_next = { type: 'button', category: 'Selected cue', name: 'Selected cue ▶', style: brandedStyle(`CUE ▶\n${cueVar}`, dark, 18, 'right:bottom'), steps: [{ down: [{ actionId: 'selected_cue_next', options: {} }], up: [] }], feedbacks: [offLive] }
     presets.selected_live = { type: 'button', category: 'Selected cue', name: 'Selected cue = live', style: brandedStyle(`LIVE\n$(${L}:cue_live)`, dark, 18), steps: [{ down: [{ actionId: 'selected_cue_live', options: {} }], up: [] }], feedbacks: [connected] }
-    presets.display_live = { type: 'button', category: 'Selected cue', name: 'Display: live cue', style: brandedStyle(`LIVE\n$(${L}:cue_live)`, '#000000', 18), steps: [{ down: [], up: [] }], feedbacks: [connected] }
     presets.display_selected = { type: 'button', category: 'Selected cue', name: 'Display: selected cue', style: brandedStyle(`NOTE\n${cueVar}`, '#000000', 18, 'right:bottom'), steps: [{ down: [], up: [] }], feedbacks: [offLive] }
     return presets
   }

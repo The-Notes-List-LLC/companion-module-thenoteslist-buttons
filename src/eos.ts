@@ -61,6 +61,8 @@ export class EosReader {
   private walkRetried = false
   private walkAnnounced = false
   private wantedByNumber: Set<string> = new Set()
+  /** Labels learned from by-number replies (which carry no index). */
+  private labels: Map<string, string> = new Map()
   private subscribed = false
   private announcedCount = false
   private drainTimer: NodeJS.Timeout | null = null
@@ -85,6 +87,12 @@ export class EosReader {
     try { this.socket?.close() } catch { /* already closed */ }
     this.socket = null
     this.connected = false
+  }
+
+  /** Label of a base cue: from the indexed cache, else from a by-number reply. */
+  labelOf(number: string): string {
+    for (const c of this.byIndex.values()) if (c.number === number && c.part === 0) return c.label
+    return this.labels.get(number) ?? ''
   }
 
   /** Cues known so far, in sheet order. */
@@ -265,9 +273,20 @@ export class EosReader {
       if (m[1] !== String(this.cueList)) return
       const index = Number(msg.args?.[0]?.value)
       if (!Number.isFinite(index)) return
+      const label = String(msg.args?.[2]?.value ?? '')
+      if (index < 0) {
+        // A by-number get (`/eos/get/cue/<list>/<num>`) answers with index -1:
+        // Eos does not place the cue for us. Keep the label only; the walk (or
+        // a later by-index read) supplies the position. Never cache it at -1,
+        // or it sorts first and the cursor thinks the live cue is at the top.
+        if (Number(m[3]) === 0) this.labels.set(m[2], label)
+        this.wantedByNumber.delete(m[2])
+        this.ev.onCache(this.cache(), this.count)
+        return
+      }
       // Parts occupy their own index in the list; keep them so the walk can
       // complete and the cursor can step OVER them.
-      const cue: EosCue = { number: m[2], label: String(msg.args?.[2]?.value ?? ''), index, part: Number(m[3]) }
+      const cue: EosCue = { number: m[2], label, index, part: Number(m[3]) }
       const fresh = !this.byIndex.has(index)
       this.byIndex.set(index, cue)
       if (fresh) {
