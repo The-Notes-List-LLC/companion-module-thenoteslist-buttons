@@ -21,7 +21,7 @@
  * current active/pending cue once on connect.
  */
 import type { CueSheet } from './cursor.js'
-import { OscTcpSocket, type OscMessage, type OscPacket, type OscSendArg } from './osc-tcp.js'
+import { OscTcpSocket, type OscMessage, type OscPacket, type OscSendArg, type OscTcpHandlers } from './osc-tcp.js'
 
 export interface EosCue {
 	number: string
@@ -39,6 +39,13 @@ export interface EosReaderEvents {
 	log: (level: 'info' | 'warn' | 'error' | 'debug', msg: string) => void
 }
 
+/** The socket as the reader uses it; tests pass a scripted one. */
+export interface EosSocket {
+	send(address: string, args?: OscSendArg[]): void
+	destroy(): void
+}
+export type EosSocketFactory = (host: string, port: number, useSlip: boolean, handlers: OscTcpHandlers) => EosSocket
+
 const PORT_OSC10 = 3032
 const PORT_SLIP = 3037
 const WINDOW = 8 // cues either side of the live cue kept warm
@@ -54,7 +61,7 @@ const PING_MS = 5000
 const SILENCE_MS = 12000
 
 export class EosReader implements CueSheet {
-	private socket: OscTcpSocket | null = null
+	private socket: EosSocket | null = null
 	private connected = false
 	private closed = false
 	private reconnectTimer: NodeJS.Timeout | null = null
@@ -97,6 +104,7 @@ export class EosReader implements CueSheet {
 		private readonly useSlip: boolean,
 		private readonly cueList: number,
 		private readonly ev: EosReaderEvents,
+		private readonly makeSocket: EosSocketFactory = (h, p, slip, handlers) => new OscTcpSocket(h, p, slip, handlers),
 	) {}
 
 	start(): void {
@@ -184,7 +192,7 @@ export class EosReader implements CueSheet {
 		// Events from a socket that stop() or a reconnect has replaced are ignored, so a
 		// late 'close' from the old connection cannot mark the new one disconnected.
 		const current = () => this.socket === socket && !this.closed
-		const socket: OscTcpSocket = new OscTcpSocket(this.host, port, this.useSlip, {
+		const socket: EosSocket = this.makeSocket(this.host, port, this.useSlip, {
 			onConnect: () => {
 				if (!current()) return
 				if (this.connectTimer) clearTimeout(this.connectTimer)
@@ -278,7 +286,7 @@ export class EosReader implements CueSheet {
 		}, CONNECT_TIMEOUT_MS)
 	}
 
-	private startPing(socket: OscTcpSocket): void {
+	private startPing(socket: EosSocket): void {
 		this.stopPing()
 		this.lastRx = Date.now()
 		this.pingTimer = setInterval(() => {
