@@ -166,8 +166,10 @@ describe('network failures', () => {
 		expect(h.status.at(-1)?.[0]).toBe('ok')
 	})
 
-	it('stops asking for counts once the station is revoked', async () => {
+	it('stops asking for counts once the station is revoked, and blanks what the keys show', async () => {
 		await inst.configUpdated(PAIRED, SECRETS)
+		await flush()
+		expect(h.vars.cue_outstanding).toBe(3)
 		routes['/api/stations/counts'] = () => ({ status: 401, body: { error: 'unauthorized', message: 'revoked' } })
 		routes['/api/stations/me'] = () => ({ status: 401, body: { error: 'unauthorized', message: 'revoked' } })
 		await vi.advanceTimersByTimeAsync(5_000)
@@ -175,6 +177,8 @@ describe('network failures', () => {
 		await vi.advanceTimersByTimeAsync(50_000)
 		expect(count('/api/stations/counts')).toBe(0)
 		expect(h.status.at(-1)?.[0]).toBe('bad_config')
+		expect(h.vars.cue_outstanding).toBe('')
+		expect(h.vars.station_name).toBe('')
 	})
 })
 

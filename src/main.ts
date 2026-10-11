@@ -389,6 +389,17 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 				paired = false
 				this.stopLoops()
 				this.updateStatus(InstanceStatus.BadConfig, 'Not paired — tick "Start pairing"')
+				// Keys must not keep showing the revoked station's counts.
+				for (const m of MODULES) this.counts[m.id] = 0
+				this.setVariableValues({
+					station_name: '',
+					production_name: '',
+					cue_outstanding: '',
+					work_outstanding: '',
+					production_outstanding: '',
+					electrician_outstanding: '',
+				})
+				this.checkFeedbacks('outstanding_above')
 			} else {
 				this.updateStatus(InstanceStatus.ConnectionFailure, describe(e))
 			}
