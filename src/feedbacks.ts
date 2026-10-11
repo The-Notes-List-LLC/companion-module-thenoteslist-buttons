@@ -48,7 +48,14 @@ export function UpdateFeedbacks(self: NotesListInstance): void {
 			name: 'Selected cue is not the live cue',
 			defaultStyle: { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) },
 			options: [],
-			callback: () => self.cursorOffset() !== 0,
+			callback: () => self.isOffLive(),
+		},
+		selected_cue_on_live: {
+			type: 'boolean',
+			name: 'Selected cue is the live cue (desk connected)',
+			defaultStyle: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) },
+			options: [],
+			callback: () => self.isOnLive(),
 		},
 		eos_connected: {
 			type: 'boolean',

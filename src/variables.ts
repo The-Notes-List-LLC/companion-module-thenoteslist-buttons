@@ -14,6 +14,7 @@ export function UpdateVariableDefinitions(self: NotesListInstance): void {
 		{ variableId: 'cue_live_label', name: 'Eos: label of the live cue' },
 		{ variableId: 'selected_cue', name: 'Selected cue: the cue the next note lands on (live unless you stepped)' },
 		{ variableId: 'selected_cue_label', name: 'Selected cue label' },
+		{ variableId: 'selected_cue_label_short', name: 'Selected cue label, first 7 characters (fits a key face)' },
 		{ variableId: 'selected_cue_offset', name: 'Selected cue offset from live (0 = live)' },
 		{ variableId: 'eos_connected', name: 'Eos desk connected (true/false)' },
 	])

@@ -73,11 +73,18 @@ export class StationApi {
 			if (!this.token) throw new ApiError(401, 'unauthorized', 'Not paired')
 			headers.authorization = `Bearer ${this.token}`
 		}
-		const res = await fetch(`${this.baseUrl.replace(/\/$/, '')}${path}`, {
-			...init,
-			headers,
-			signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
-		})
+		const url = `${this.baseUrl.replace(/\/$/, '')}${path}`
+		let res: Response
+		try {
+			res = await fetch(url, {
+				...init,
+				headers,
+				signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
+			})
+		} catch (e) {
+			// No HTTP status: status 0 marks a network failure (or a timeout).
+			throw new ApiError(0, 'network', networkMessage(e, url))
+		}
 		const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
 		if (!res.ok) {
 			throw new ApiError(
@@ -133,4 +140,19 @@ export class StationApi {
 			body: JSON.stringify({ status }),
 		})
 	}
+}
+
+/** "fetch failed" says nothing; name the host and the real cause (ENOTFOUND, ECONNREFUSED, timeout…). */
+function networkMessage(e: unknown, url: string): string {
+	const err = e as { name?: string; message?: string; cause?: { code?: string; message?: string } }
+	let host = url
+	try {
+		host = new URL(url).host
+	} catch {
+		// keep the raw url
+	}
+	if (err?.name === 'TimeoutError') return `No answer from ${host} within ${REQUEST_TIMEOUT_MS / 1000} s`
+	if (err?.name === 'AbortError') return `Request to ${host} cancelled`
+	const cause = err?.cause?.code ?? err?.cause?.message
+	return `Cannot reach ${host} (${cause ?? err?.message ?? String(e)})`
 }

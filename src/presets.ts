@@ -96,10 +96,18 @@ export function UpdatePresets(self: NotesListInstance): void {
 	const dark = '#1f1f1f'
 	const amber = { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) }
 	const offLive = { feedbackId: 'selected_cue_off_live', options: {}, style: amber }
-	const connected = {
-		feedbackId: 'eos_connected',
+	// LIVE is green only while the selection IS the live cue; stepped away it stays
+	// dark (the ◀ / ▶ keys go amber), and with no desk it reads NO DESK.
+	const onLive = {
+		feedbackId: 'selected_cue_on_live',
 		options: {},
 		style: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) },
+	}
+	const noDesk = {
+		feedbackId: 'eos_connected',
+		options: {},
+		isInverted: true,
+		style: { text: 'NO\nDESK', color: combineRgb(128, 128, 128) },
 	}
 	presets.selected_prev = {
 		type: 'button',
@@ -123,7 +131,7 @@ export function UpdatePresets(self: NotesListInstance): void {
 		name: 'Selected cue = live',
 		style: brandedStyle(`LIVE\n$(${L}:cue_live)`, dark, 18),
 		steps: [{ down: [{ actionId: 'selected_cue_live', options: {} }], up: [] }],
-		feedbacks: [connected],
+		feedbacks: [onLive, noDesk],
 	}
 	presets.display_live = {
 		type: 'button',

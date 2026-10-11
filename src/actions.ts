@@ -40,7 +40,9 @@ export function UpdateActions(self: NotesListInstance): void {
 				let cueNumber: string | undefined =
 					(await context.parseVariablesInString(String(event.options.cueNumber ?? ''))).trim() || undefined
 				if (!cueNumber || cueNumber === '$NA') cueNumber = self.cursorCue()?.number
-				await self.ui({
+				// Not awaited: a slow round-trip must not hold Companion's action timeout
+				// (it logs "Call timed out" after 10 s); ui() logs the result itself.
+				void self.ui({
 					command: 'open_note_editor',
 					module: mod,
 					cueNumber,
@@ -79,13 +81,13 @@ export function UpdateActions(self: NotesListInstance): void {
 			name: 'Highlight next note',
 			description: 'Moves the highlight down one row in your open tab on this module page.',
 			options: [moduleDropdown()],
-			callback: async (event) => self.ui({ command: 'next_note', module: String(event.options.module) }),
+			callback: async (event) => void self.ui({ command: 'next_note', module: String(event.options.module) }),
 		},
 		tab_prev_note: {
 			name: 'Highlight previous note',
 			description: 'Moves the highlight up one row in your open tab on this module page.',
 			options: [moduleDropdown()],
-			callback: async (event) => self.ui({ command: 'prev_note', module: String(event.options.module) }),
+			callback: async (event) => void self.ui({ command: 'prev_note', module: String(event.options.module) }),
 		},
 		tab_set_highlighted_status: {
 			name: 'Set status of highlighted note',
@@ -95,7 +97,7 @@ export function UpdateActions(self: NotesListInstance): void {
 				{ type: 'dropdown', id: 'status', label: 'Status', default: 'complete', choices: STATUSES },
 			],
 			callback: async (event) =>
-				self.ui({
+				void self.ui({
 					command: 'set_highlighted_status',
 					module: String(event.options.module),
 					status: String(event.options.status),
@@ -105,19 +107,19 @@ export function UpdateActions(self: NotesListInstance): void {
 			name: 'Undo',
 			description: 'Undoes the last change in your open tab on this module page.',
 			options: [moduleDropdown()],
-			callback: async (event) => self.ui({ command: 'undo', module: String(event.options.module) }),
+			callback: async (event) => void self.ui({ command: 'undo', module: String(event.options.module) }),
 		},
 		tab_redo: {
 			name: 'Redo',
 			description: 'Redoes the last undone change in your open tab on this module page.',
 			options: [moduleDropdown()],
-			callback: async (event) => self.ui({ command: 'redo', module: String(event.options.module) }),
+			callback: async (event) => void self.ui({ command: 'redo', module: String(event.options.module) }),
 		},
 		tab_jump_module: {
 			name: 'Go to module',
 			description: 'Navigates your open tab on this production to the chosen module.',
 			options: [moduleDropdown('work', 'Go to')],
-			callback: async (event) => self.ui({ command: 'jump_module', module: String(event.options.module) }),
+			callback: async (event) => void self.ui({ command: 'jump_module', module: String(event.options.module) }),
 		},
 	}
 	self.setActionDefinitions(actions)
