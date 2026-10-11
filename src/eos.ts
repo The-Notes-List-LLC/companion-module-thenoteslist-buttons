@@ -231,6 +231,8 @@ export class EosReader implements CueSheet {
 				if (!this.gotPacket) {
 					// The desk answers in our framing: the connection is good, so back off from scratch.
 					this.gotPacket = true
+					// After a reported problem the connect line went to debug; say it is back.
+					if (this.errorLogged) this.ev.log('info', `Eos: ${this.host}:${port} is answering again`)
 					this.errorLogged = false
 					this.reconnectDelay = RECONNECT_MIN_MS
 				}

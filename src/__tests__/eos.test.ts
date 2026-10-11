@@ -204,6 +204,23 @@ describe('EosReader', () => {
 		r.stop()
 	})
 
+	it('says when the desk is back after an outage, once', async () => {
+		const r = reader()
+		await connected(r)
+		handlers.onPacket(count(0))
+		handlers.onClose() // desk quit
+		await vi.advanceTimersByTimeAsync(5000)
+		handlers.onError(new Error('connect ECONNREFUSED'))
+		handlers.onClose()
+		await vi.advanceTimersByTimeAsync(10000)
+		handlers.onConnect()
+		handlers.onPacket(count(0))
+		handlers.onPacket(count(0))
+		expect(logs.filter((l) => l.includes('cannot reach')).length).toBe(1)
+		expect(logs.filter((l) => l.startsWith('info') && l.includes('answering again')).length).toBe(1)
+		r.stop()
+	})
+
 	it('ignores another cue list', async () => {
 		const r = reader(2)
 		await connected(r)
