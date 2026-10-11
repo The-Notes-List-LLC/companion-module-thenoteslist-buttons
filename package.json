@@ -1,33 +1,51 @@
 {
-  "name": "companion-module-thenoteslist-thenoteslist",
-  "version": "1.0.0",
-  "description": "Bitfocus Companion module for The Notes List: open the note editor with the live cue prefilled, step through and set the status of notes, and show outstanding counts from any Companion surface.",
-  "main": "dist/main.js",
-  "type": "module",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/bitfocus/companion-module-thenoteslist-thenoteslist.git"
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "dev": "tsc -p tsconfig.json --watch",
-    "lint": "eslint src",
-    "package": "companion-module-build",
-    "format": "prettier -w src"
-  },
-  "dependencies": {
-    "@companion-module/base": "^1.12.0",
-    "osc": "^2.4.5"
-  },
-  "devDependencies": {
-    "@companion-module/tools": "^2.8.0",
-    "eslint": "^9.39.5",
-    "typescript": "~5.6.0",
-    "typescript-eslint": "^8.71.0"
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "prettier": "@companion-module/tools/.prettierrc.json"
+	"name": "companion-module-thenoteslist-thenoteslist",
+	"version": "1.0.1",
+	"description": "Bitfocus Companion module for The Notes List: open the note editor with the live cue prefilled, step through and set the status of notes, and show outstanding counts from any Companion surface.",
+	"main": "dist/main.js",
+	"type": "module",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/bitfocus/companion-module-thenoteslist-thenoteslist.git"
+	},
+	"scripts": {
+		"postinstall": "husky",
+		"format": "prettier -w .",
+		"package": "run build && companion-module-build",
+		"build": "rimraf dist && run build:main",
+		"build:main": "tsc -p tsconfig.build.json",
+		"dev": "tsc -p tsconfig.build.json --watch",
+		"lint:raw": "eslint",
+		"lint": "run lint:raw ."
+	},
+	"dependencies": {
+		"@companion-module/base": "~1.14.1",
+		"node-osc": "^11.7.1"
+	},
+	"devDependencies": {
+		"@companion-module/tools": "^2.8.0",
+		"@types/node": "^22.19.3",
+		"eslint": "^9.39.5",
+		"husky": "^9.1.7",
+		"lint-staged": "^16.2.7",
+		"prettier": "^3.7.4",
+		"rimraf": "^6.1.2",
+		"typescript": "~5.9.3",
+		"typescript-eslint": "^8.71.0"
+	},
+	"engines": {
+		"node": "^22.20",
+		"yarn": "^4"
+	},
+	"prettier": "@companion-module/tools/.prettierrc.json",
+	"lint-staged": {
+		"*.{css,json,md,scss}": [
+			"prettier --write"
+		],
+		"*.{ts,tsx,js,jsx}": [
+			"yarn lint:raw --fix"
+		]
+	},
+	"packageManager": "yarn@4.12.0"
 }

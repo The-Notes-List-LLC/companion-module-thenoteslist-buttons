@@ -1,79 +1,54 @@
-import {
-	InstanceBase,
-	InstanceStatus,
-	combineRgb,
-	runEntrypoint,
-	type CompanionActionDefinitions,
-	type CompanionFeedbackDefinitions,
-	type CompanionPresetDefinitions,
-	type CompanionVariableDefinition,
-	type SomeCompanionConfigField,
-} from '@companion-module/base'
-import { StationApi, type ApiError } from './api.js'
-import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig } from './config.js'
+import { InstanceBase, InstanceStatus, runEntrypoint, type SomeCompanionConfigField } from '@companion-module/base'
+import { ApiError, StationApi, type UiBody } from './api.js'
+import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig, type ModuleSecrets } from './config.js'
 import { EosReader, type EosCue } from './eos.js'
-import { MODULE_COLORS, brandedStyle, keyStyle } from './brand.js'
-
-const MODULES = [
-	{ id: 'cue', label: 'Cue Notes' },
-	{ id: 'work', label: 'Work Notes' },
-	{ id: 'production', label: 'Production Notes' },
-	{ id: 'electrician', label: 'Electrician Notes' },
-] as const
-type ModuleId = (typeof MODULES)[number]['id']
-
-type Opt = { value: string; label: string; color?: string }
-type ModuleOptions = Record<ModuleId, { priorities: Opt[]; types: Opt[] }>
-// Fallbacks until /me answers: the app's system defaults.
-const FALLBACK_PRIORITIES: Opt[] = [
-	'critical',
-	'very_high',
-	'high',
-	'medium_high',
-	'medium',
-	'medium_low',
-	'low',
-	'very_low',
-	'uncritical',
-].map((v) => ({ value: v, label: v.replace(/_/g, ' ') }))
-const STATUSES = [
-	{ id: 'complete', label: 'Complete' },
-	{ id: 'cancelled', label: 'Cancelled' },
-	{ id: 'review', label: 'In Review (Work Notes only)' },
-	{ id: 'todo', label: 'Back to To Do' },
-]
+import { MODULES, type ModuleId, type ModuleOptions } from './choices.js'
+import { UpdateActions } from './actions.js'
+import { UpdateFeedbacks } from './feedbacks.js'
+import { UpdatePresets } from './presets.js'
+import { UpdateVariableDefinitions } from './variables.js'
+import { UpgradeScripts } from './upgrades.js'
 
 const COUNTS_INTERVAL_MS = 5000
 const ME_INTERVAL_MS = 60000
 const PAIR_POLL_MS = 3500 // server floor is 3000
+const PAIR_TTL_MS = 10 * 60000 // used when the server's expiresAt cannot be parsed
 
-class NotesListInstance extends InstanceBase<ModuleConfig> {
-	private config!: ModuleConfig
-	private api!: StationApi
-	private counts: Record<ModuleId, number> = { cue: 0, work: 0, production: 0, electrician: 0 }
-	private connected = false
-	private timers: NodeJS.Timeout[] = []
-	private pairing: { code: string; pollSecret: string; expiresAt: number } | null = null
-	private options: ModuleOptions | null = null
+export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets> {
+	config!: ModuleConfig
+	private secrets: ModuleSecrets = {}
+	private api: StationApi | null = null
+	counts: Record<ModuleId, number> = { cue: 0, work: 0, production: 0, electrician: 0 }
+	connected = false
+	eosConnected = false
+	/** The show's types and priorities, from /me. */
+	options: ModuleOptions | null = null
 	private optionsKey = ''
+	/** Bumped by configUpdated() and destroy(): an async path that finds it changed after an await drops out. */
+	private generation = 0
+	/** Bumped by stopLoops(): a loop from an earlier epoch does not schedule its next run. */
+	private loopEpoch = 0
+	private timers: Set<NodeJS.Timeout> = new Set()
+	private pairing: { code: string; pollSecret: string; expiresAt: number } | null = null
 	// Cue cursor (#907): the desk's list in sheet order, the live cue, and where
-	// the operator has stepped to. Cursor index is relative to `cues`.
+	// the operator has stepped to. Cursor index is relative to the reader's cache.
 	private eos: EosReader | null = null
-	/** Live view of the reader's cache (sheet order); never a stale snapshot. */
-	private get cues(): EosCue[] {
-		return this.eos?.cache() ?? []
-	}
+	/** host/SLIP/list the reader was started with; the reader restarts only when this changes. */
+	private eosKey = ''
 	private cueCount = 0
 	private liveCue: string | null = null
 	/** Sheet index the operator stepped to; null = follow live. */
 	private cursorIndex: number | null = null
 
-	async init(config: ModuleConfig): Promise<void> {
-		await this.configUpdated(config)
+	async init(config: ModuleConfig, _isFirstInit: boolean, secrets: ModuleSecrets): Promise<void> {
+		await this.configUpdated(config, secrets)
 	}
 
 	async destroy(): Promise<void> {
-		this.clearTimers()
+		this.generation++
+		this.stopLoops()
+		this.api?.abort()
+		this.api = null
 		this.eos?.stop()
 		this.eos = null
 	}
@@ -88,14 +63,30 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 		})
 	}
 
-	async configUpdated(config: ModuleConfig): Promise<void> {
-		this.clearTimers()
-		this.config = { ...config, baseUrl: config.baseUrl || DEFAULT_BASE_URL }
-		this.api = new StationApi(this.config.baseUrl, this.config.token || null)
-		this.defineEntities()
+	async configUpdated(config: ModuleConfig, secrets: ModuleSecrets): Promise<void> {
+		this.generation++
+		this.stopLoops()
+		this.api?.abort()
+		this.api = null
+		this.config = { ...config, baseUrl: (config.baseUrl || DEFAULT_BASE_URL).trim() }
+		this.secrets = { ...secrets }
+		this.updateEntities()
 		this.startEos()
 
-		if (this.config.startPairing || !this.config.token) {
+		const urlProblem = checkBaseUrl(this.config.baseUrl)
+		if (urlProblem) {
+			this.connected = false
+			this.updateStatus(InstanceStatus.BadConfig, urlProblem)
+			this.setVariableValues({ connected: 'false' })
+			this.checkFeedbacks('connected')
+			return
+		}
+		if (this.config.baseUrl.startsWith('http:'))
+			this.log('warn', 'Base URL uses http: the station token travels unencrypted. Use https unless testing locally.')
+		const token = this.secrets.token || null
+		this.api = new StationApi(this.config.baseUrl, token)
+
+		if (this.config.startPairing || !token) {
 			// A pairing already in flight (code not yet expired) survives a config
 			// re-save: keep polling it instead of minting a new code.
 			if (this.pairing && Date.now() < this.pairing.expiresAt) {
@@ -103,7 +94,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 					InstanceStatus.Connecting,
 					`PAIR CODE ${this.pairing.code} — enter it in the show's Settings → Button stations`,
 				)
-				this.timers.push(setInterval(() => void this.pollPairing(), PAIR_POLL_MS))
+				this.loop(PAIR_POLL_MS, async () => this.pollPairing())
 				return
 			}
 			await this.beginPairing()
@@ -112,24 +103,48 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 		await this.startPolling()
 	}
 
+	updateEntities(): void {
+		UpdateActions(this)
+		UpdateFeedbacks(this)
+		UpdateVariableDefinitions(this)
+		UpdatePresets(this)
+	}
+
 	private async startPolling(): Promise<void> {
-		await this.refreshMe()
-		this.timers.push(setInterval(() => void this.refreshCounts(), COUNTS_INTERVAL_MS))
-		this.timers.push(setInterval(() => void this.refreshMe(), ME_INTERVAL_MS))
+		const gen = this.generation
+		this.updateStatus(InstanceStatus.Connecting)
+		const paired = await this.refreshMe()
+		if (gen !== this.generation || !paired) return
+		this.loop(COUNTS_INTERVAL_MS, async () => this.refreshCounts())
+		this.loop(ME_INTERVAL_MS, async () => {
+			await this.refreshMe()
+		})
 		void this.refreshCounts()
 	}
 
 	// ---------------------------------------------------------------- pairing
 	private async beginPairing(): Promise<void> {
+		const api = this.api
+		if (!api) return
+		const gen = this.generation
 		try {
 			// A saved token means a previous station: revoke it so it does not linger
 			// as an "Active" station nobody holds. Best effort.
-			if (this.config.token) {
-				await this.api.revokeSelf().catch(() => undefined)
-				this.api.setToken(null)
+			if (this.secrets.token) {
+				await api.revokeSelf().catch(() => undefined)
+				if (gen !== this.generation) return
+				api.setToken(null)
+				this.secrets = { ...this.secrets, token: '' }
+				this.saveConfig(this.config, this.secrets)
 			}
-			const start = await this.api.pairStart()
-			this.pairing = { code: start.code, pollSecret: start.pollSecret, expiresAt: Date.parse(start.expiresAt) }
+			const start = await api.pairStart()
+			if (gen !== this.generation) return
+			const expiresAt = Date.parse(start.expiresAt)
+			this.pairing = {
+				code: start.code,
+				pollSecret: start.pollSecret,
+				expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + PAIR_TTL_MS,
+			}
 			this.updateStatus(
 				InstanceStatus.Connecting,
 				`PAIR CODE ${start.code} — enter it in the show's Settings → Button stations`,
@@ -138,13 +153,14 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 			// Push the code into the stored config so an OPEN settings window shows it.
 			// configUpdated keeps the in-flight pairing (see the guard there).
 			this.config = { ...this.config, pairingCode: start.code }
-			this.saveConfig(this.config)
+			this.saveConfig(this.config, undefined)
 			this.log(
 				'warn',
 				`PAIRING CODE: ${start.code}  →  The Notes List → the show → Settings → Button stations. Expires in 10 minutes. (Also in variable $(${this.label}:pairing_code).)`,
 			)
-			this.timers.push(setInterval(() => void this.pollPairing(), PAIR_POLL_MS))
+			this.loop(PAIR_POLL_MS, async () => this.pollPairing())
 		} catch (e) {
+			if (gen !== this.generation) return
 			const err = e as ApiError
 			const msg =
 				err.status === 429
@@ -156,75 +172,95 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 	}
 
 	private async pollPairing(): Promise<void> {
-		if (!this.pairing) return
-		if (Date.now() > this.pairing.expiresAt) {
+		const pairing = this.pairing
+		const api = this.api
+		if (!pairing || !api) return
+		if (Date.now() > pairing.expiresAt) {
 			this.pairing = null
-			this.clearTimers()
+			this.stopLoops()
 			this.updateStatus(InstanceStatus.Disconnected, 'Pairing code expired — tick "Start pairing" again')
 			return
 		}
+		const gen = this.generation
 		try {
-			const res = await this.api.pairPoll(this.pairing.code, this.pairing.pollSecret)
+			const res = await api.pairPoll(pairing.code, pairing.pollSecret)
+			if (gen !== this.generation || this.pairing !== pairing) return
 			if (res.token) {
 				this.pairing = null
-				this.clearTimers()
+				this.stopLoops()
 				this.setVariableValues({ pairing_code: '' })
-				// Persist the token; the config form shows it as a secret and never in full.
+				// The token goes into Companion's secrets store, which is kept out of exports.
 				this.config = {
 					...this.config,
 					startPairing: false,
 					pairingCode: '',
-					token: res.token,
 					stationName: res.station?.name ?? '',
 					productionName: res.station?.productionName ?? '',
 				}
-				this.saveConfig(this.config)
+				this.secrets = { ...this.secrets, token: res.token }
+				this.saveConfig(this.config, this.secrets)
 				this.log('info', `Paired as "${res.station?.name}" on ${res.station?.productionName ?? 'production'}.`)
 				// saveConfig does not call configUpdated back, so go live on the new token here.
-				this.api.setToken(res.token)
+				api.setToken(res.token)
 				await this.startPolling()
 			}
 		} catch (e) {
+			if (gen !== this.generation || this.pairing !== pairing) return
 			const err = e as ApiError
 			if (err.status === 429) return // slow down: just wait for the next tick
 			if (err.status === 410 || err.status === 409 || err.status === 404) {
 				this.pairing = null
-				this.clearTimers()
+				this.stopLoops()
 				this.updateStatus(InstanceStatus.Disconnected, `Pairing ended: ${err.message}`)
+				return
 			}
+			this.log('debug', `Pairing check failed: ${describe(e)}`)
 		}
 	}
 
 	// ---------------------------------------------------------------- Eos cue cursor
 	private startEos(): void {
+		const host = (this.config.eosHost || '').trim()
+		const useSlip = !!this.config.eosUseSlip
+		const cueList = Number(this.config.eosCueList) || 1
+		const key = JSON.stringify([host, useSlip, cueList])
+		// Saving unrelated settings (or the save after pairing) keeps the desk connection.
+		if (key === this.eosKey) return
+		this.eosKey = key
 		this.eos?.stop()
 		this.eos = null
-		const host = (this.config.eosHost || '').trim()
-		if (!host) {
-			this.setVariableValues({
-				eos_connected: 'false',
-				cue_live: '',
-				selected_cue: '',
-				selected_cue_label: '',
-				selected_cue_offset: '0',
-			})
-			return
-		}
-		this.eos = new EosReader(host, !!this.config.eosUseSlip, Number(this.config.eosCueList) || 1, {
+		// A different desk or list: nothing from the old one applies.
+		this.liveCue = null
+		this.cursorIndex = null
+		this.cueCount = 0
+		this.eosConnected = false
+		this.setVariableValues({
+			eos_connected: 'false',
+			cue_live: '',
+			cue_live_label: '',
+			selected_cue: '',
+			selected_cue_label: '',
+			selected_cue_offset: '0',
+		})
+		this.checkFeedbacks('eos_connected', 'selected_cue_off_live')
+		if (!host) return
+		this.eos = new EosReader(host, useSlip, cueList, {
 			onStatus: (connected) => {
+				this.eosConnected = connected
 				this.setVariableValues({ eos_connected: connected ? 'true' : 'false' })
 				this.checkFeedbacks('eos_connected')
 			},
 			onLive: (num) => {
 				const changed = num !== this.liveCue
+				// Measured against the PREVIOUS live cue, before it is replaced.
+				const offset = this.cursorOffset()
 				this.liveCue = num
 				if (changed) {
-					const c = this.cues.find((x) => x.number === num && x.part === 0)
+					const c = this.eos?.findBase(num)
 					this.log('info', `Live cue ${num}${c?.label ? ` ${c.label}` : ''}`)
-					if (this.config.eosKeepOffset && this.cursorIndex !== null) {
-						const offset = this.cursorOffset()
-						const liveIdx = this.cues.find((c) => c.number === num && c.part === 0)?.index
-						this.cursorIndex = liveIdx !== undefined ? Math.max(0, liveIdx + offset) : null
+					if (this.config.eosKeepOffset && this.cursorIndex !== null && c) {
+						const max = this.cueCount > 0 ? this.cueCount - 1 : Number.MAX_SAFE_INTEGER
+						this.cursorIndex = Math.max(0, Math.min(max, c.index + offset))
 					} else {
 						this.cursorIndex = null // follow live
 					}
@@ -242,8 +278,7 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 
 	private liveIndex(): number | null {
 		if (this.liveCue === null) return null
-		const c = this.cues.find((x) => x.number === this.liveCue && x.part === 0)
-		return c ? c.index : null
+		return this.eos?.findBase(this.liveCue)?.index ?? null
 	}
 
 	/** Sheet index the cursor points at: stepped, else live. */
@@ -251,51 +286,59 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 		return this.cursorIndex !== null ? this.cursorIndex : this.liveIndex()
 	}
 
-	private cursorOffset(): number {
+	cursorOffset(): number {
 		const pos = this.cursorPos()
 		const live = this.liveIndex()
 		return pos === null || live === null ? 0 : pos - live
 	}
 
-	private stepCursor(delta: number): void {
+	stepCursor(delta: number): void {
 		const pos = this.cursorPos()
 		if (pos === null) {
 			this.log(
 				'info',
 				this.liveCue === null
 					? 'Selected cue: the desk has not reported a live cue yet (fire a cue, or check the Eos connection).'
-					: `Selected cue: live cue ${this.liveCue} is not in the cache yet (${this.cues.length}/${this.cueCount} cached); try again in a moment.`,
+					: `Selected cue: live cue ${this.liveCue} is not in the cache yet (${this.eos?.cache().length ?? 0}/${this.cueCount} cached); try again in a moment.`,
 			)
 			return
 		}
-		const max = this.cueCount > 0 ? this.cueCount - 1 : Number.MAX_SAFE_INTEGER
+		if (this.cueCount <= 0) {
+			this.log('info', 'Selected cue: the desk has not reported the size of the cue list yet; try again in a moment.')
+			return
+		}
+		const max = this.cueCount - 1
 		// Step over cue PARTS: they hold an index but are not a place a note lands.
 		let next = Math.max(0, Math.min(max, pos + delta))
-		while (next > 0 && next < max && this.cues.find((c) => c.index === next)?.part) next += delta
+		while (next > 0 && next < max && this.eos?.cueAt(next)?.part) next += delta
 		this.cursorIndex = next
 		// Keep the window warm around wherever the cursor goes.
 		this.eos?.ensureRange(next - 8, next + 8)
-		const hit = this.cues.find((c) => c.index === next)
+		const hit = this.eos?.cueAt(next)
 		this.log('info', `Selected cue → ${hit ? `${hit.number} ${hit.label}`.trim() : `index ${next} (loading)`}`)
 		this.publishCursor()
 	}
 
-	private resetCursor(): void {
+	resetCursor(): void {
 		this.cursorIndex = null
 		this.publishCursor()
+	}
+
+	reloadCueList(): void {
+		this.eos?.reloadList()
 	}
 
 	/** The cue a New note should land on: the cursor's cue if cached, else the live cue. */
 	cursorCue(): EosCue | null {
 		const pos = this.cursorPos()
-		const hit = pos === null ? undefined : this.cues.find((c) => c.index === pos)
+		const hit = pos === null ? undefined : this.eos?.cueAt(pos)
 		if (hit) return hit
 		return this.liveCue !== null ? { number: this.liveCue, label: '', index: -1, part: 0 } : null
 	}
 
 	private publishCursor(): void {
 		const c = this.cursorCue()
-		const live = this.liveCue === null ? undefined : this.cues.find((x) => x.number === this.liveCue && x.part === 0)
+		const live = this.liveCue === null ? undefined : this.eos?.findBase(this.liveCue)
 		this.setVariableValues({
 			cue_live: this.liveCue ?? '',
 			cue_live_label: live?.label ?? '',
@@ -307,9 +350,15 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 	}
 
 	// ---------------------------------------------------------------- polling
-	private async refreshMe(): Promise<void> {
+	/** Returns false when the server no longer knows this station (polling then stops until the next pairing). */
+	private async refreshMe(): Promise<boolean> {
+		const api = this.api
+		if (!api) return false
+		const gen = this.generation
+		let paired = true
 		try {
-			const me = await this.api.me()
+			const me = await api.me()
+			if (gen !== this.generation) return false
 			this.connected = true
 			this.updateStatus(InstanceStatus.Ok, `${me.station.name} · ${me.production.name ?? ''}`)
 			this.setVariableValues({
@@ -323,22 +372,34 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 				if (key !== this.optionsKey) {
 					this.optionsKey = key
 					this.options = me.options
-					this.defineEntities()
+					this.updateEntities()
 				}
 			}
 		} catch (e) {
+			if (gen !== this.generation) return false
 			this.connected = false
 			const err = e as ApiError
-			const status = err.status === 401 ? InstanceStatus.BadConfig : InstanceStatus.ConnectionFailure
-			this.updateStatus(status, err.status === 401 ? 'Not paired — tick "Start pairing"' : describe(e))
+			if (err.status === 401) {
+				// Station revoked or never paired: stop calling the server until the user pairs again.
+				paired = false
+				this.stopLoops()
+				this.updateStatus(InstanceStatus.BadConfig, 'Not paired — tick "Start pairing"')
+			} else {
+				this.updateStatus(InstanceStatus.ConnectionFailure, describe(e))
+			}
 			this.setVariableValues({ connected: 'false' })
 		}
 		this.checkFeedbacks('connected')
+		return paired
 	}
 
 	private async refreshCounts(): Promise<void> {
+		const api = this.api
+		if (!api) return
+		const gen = this.generation
 		try {
-			const c = await this.api.counts()
+			const c = await api.counts()
+			if (gen !== this.generation) return
 			for (const m of MODULES) this.counts[m.id] = c[m.id]?.outstanding ?? 0
 			this.setVariableValues({
 				cue_outstanding: this.counts.cue,
@@ -347,432 +408,30 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 				electrician_outstanding: this.counts.electrician,
 			})
 			this.checkFeedbacks('outstanding_above')
-			if (!this.connected) void this.refreshMe()
+			if (!this.connected) await this.refreshMe()
 		} catch (e) {
+			if (gen !== this.generation) return
 			const err = e as ApiError
-			if (err.status === 401 || err.status === 402 || err.status === 403 || err.status === 410) void this.refreshMe()
-		}
-	}
-
-	// -------------------------------------------------------------- entities
-	private defineEntities(): void {
-		const cueDefault = `$(${this.label}:selected_cue)`
-		const cueOption = {
-			type: 'textinput' as const,
-			id: 'cueNumber',
-			label: 'Cue number (blank = none)',
-			default: cueDefault,
-			useVariables: true,
-			tooltip: `Resolved when you press. Default is the cue cursor ($(${this.label}:selected_cue)): the live cue unless you stepped it with the Selected cue ◀ / ▶ keys. $(${this.label}:cue_live) is always the live cue. Any other variable or a typed number also works.`,
-		}
-		const actions: CompanionActionDefinitions = {
-			open_note_editor: {
-				name: 'New note (opens the editor in your tab)',
-				description:
-					'Opens the Add Note dialog in your browser tab on this module page, prefilled with the type, priority and cue number below. Your tab must be open on that page.',
-				options: [
-					{
-						type: 'dropdown',
-						id: 'module',
-						label: 'Module',
-						default: 'cue',
-						choices: MODULES.map((m) => ({ id: m.id, label: m.label })),
-					},
-					...perModuleChoices('type', 'Type', (m) => this.options?.[m]?.types ?? [], ''),
-					...perModuleChoices(
-						'priority',
-						'Priority',
-						(m) => this.options?.[m]?.priorities ?? FALLBACK_PRIORITIES,
-						'medium',
-					),
-					cueOption,
-				],
-				callback: async (event, context) => {
-					const mod = String(event.options.module) as ModuleId
-					let cueNumber: string | undefined =
-						(await context.parseVariablesInString(String(event.options.cueNumber ?? ''))).trim() || undefined
-					if (!cueNumber || cueNumber === '$NA') cueNumber = this.cursorCue()?.number
-					await this.ui({
-						command: 'open_note_editor',
-						module: mod,
-						cueNumber,
-						type: String(event.options[`type_${mod}`] ?? '') || undefined,
-						priority: String(event.options[`priority_${mod}`] ?? '') || undefined,
-					})
-				},
-			},
-			selected_cue_prev: {
-				name: 'Selected cue ◀ (one cue earlier)',
-				description:
-					"Moves the selected cue one earlier in the desk's list without touching the console. New note lands on the selected cue.",
-				options: [],
-				callback: async () => this.stepCursor(-1),
-			},
-			selected_cue_next: {
-				name: 'Selected cue ▶ (one cue later)',
-				options: [],
-				callback: async () => this.stepCursor(1),
-			},
-			eos_reload_list: {
-				name: 'Eos: reload the cue list (after edits on the desk)',
-				options: [],
-				callback: async () => this.eos?.reloadList(),
-			},
-			selected_cue_live: {
-				name: 'Selected cue = live (follow the running cue again)',
-				options: [],
-				callback: async () => this.resetCursor(),
-			},
-			tab_next_note: {
-				name: 'Highlight next note',
-				description: 'Moves the highlight down one row in your open tab on this module page.',
-				options: [
-					{
-						type: 'dropdown',
-						id: 'module',
-						label: 'Module',
-						default: 'cue',
-						choices: MODULES.map((m) => ({ id: m.id, label: m.label })),
-					},
-				],
-				callback: async (event) => this.ui({ command: 'next_note', module: String(event.options.module) }),
-			},
-			tab_prev_note: {
-				name: 'Highlight previous note',
-				options: [
-					{
-						type: 'dropdown',
-						id: 'module',
-						label: 'Module',
-						default: 'cue',
-						choices: MODULES.map((m) => ({ id: m.id, label: m.label })),
-					},
-				],
-				callback: async (event) => this.ui({ command: 'prev_note', module: String(event.options.module) }),
-			},
-			tab_set_highlighted_status: {
-				name: 'Set status of highlighted note',
-				options: [
-					{
-						type: 'dropdown',
-						id: 'module',
-						label: 'Module',
-						default: 'cue',
-						choices: MODULES.map((m) => ({ id: m.id, label: m.label })),
-					},
-					{ type: 'dropdown', id: 'status', label: 'Status', default: 'complete', choices: STATUSES },
-				],
-				callback: async (event) =>
-					this.ui({
-						command: 'set_highlighted_status',
-						module: String(event.options.module),
-						status: String(event.options.status),
-					}),
-			},
-			tab_undo: {
-				name: 'Undo',
-				options: [
-					{
-						type: 'dropdown',
-						id: 'module',
-						label: 'Module',
-						default: 'cue',
-						choices: MODULES.map((m) => ({ id: m.id, label: m.label })),
-					},
-				],
-				callback: async (event) => this.ui({ command: 'undo', module: String(event.options.module) }),
-			},
-			tab_redo: {
-				name: 'Redo',
-				options: [
-					{
-						type: 'dropdown',
-						id: 'module',
-						label: 'Module',
-						default: 'cue',
-						choices: MODULES.map((m) => ({ id: m.id, label: m.label })),
-					},
-				],
-				callback: async (event) => this.ui({ command: 'redo', module: String(event.options.module) }),
-			},
-			tab_jump_module: {
-				name: 'Go to module',
-				description: 'Navigates your open tab on this production to the chosen module.',
-				options: [
-					{
-						type: 'dropdown',
-						id: 'module',
-						label: 'Go to',
-						default: 'work',
-						choices: MODULES.map((m) => ({ id: m.id, label: m.label })),
-					},
-				],
-				callback: async (event) => this.ui({ command: 'jump_module', module: String(event.options.module) }),
-			},
-		}
-
-		const feedbacks: CompanionFeedbackDefinitions = {
-			outstanding_above: {
-				type: 'boolean',
-				name: 'Outstanding count above threshold',
-				defaultStyle: { bgcolor: combineRgb(220, 38, 38), color: combineRgb(255, 255, 255) },
-				options: [
-					{
-						type: 'dropdown',
-						id: 'module',
-						label: 'Module',
-						default: 'work',
-						choices: MODULES.map((m) => ({ id: m.id, label: m.label })),
-					},
-					{ type: 'number', id: 'threshold', label: 'More than', default: 0, min: 0, max: 9999 },
-				],
-				callback: (fb) => this.counts[fb.options.module as ModuleId] > Number(fb.options.threshold ?? 0),
-			},
-			type_color: {
-				type: 'advanced',
-				name: 'Colour key by note type (matches the chip in the app)',
-				options: [
-					{
-						type: 'dropdown',
-						id: 'module',
-						label: 'Module',
-						default: 'cue',
-						choices: MODULES.map((m) => ({ id: m.id, label: m.label })),
-					},
-					...perModuleChoices('type', 'Type', (m) => this.options?.[m]?.types ?? [], ''),
-				],
-				callback: (fb) => {
-					const mod = fb.options.module as ModuleId
-					const opt = (this.options?.[mod]?.types ?? []).find((t) => t.value === fb.options[`type_${mod}`])
-					return opt?.color ? keyStyle(opt.color) : {}
-				},
-			},
-			priority_color: {
-				type: 'advanced',
-				name: 'Colour key by priority (matches the chip in the app)',
-				options: [
-					{
-						type: 'dropdown',
-						id: 'module',
-						label: 'Module',
-						default: 'cue',
-						choices: MODULES.map((m) => ({ id: m.id, label: m.label })),
-					},
-					...perModuleChoices(
-						'priority',
-						'Priority',
-						(m) => this.options?.[m]?.priorities ?? FALLBACK_PRIORITIES,
-						'medium',
-					),
-				],
-				callback: (fb) => {
-					const mod = fb.options.module as ModuleId
-					const opt = (this.options?.[mod]?.priorities ?? []).find((p) => p.value === fb.options[`priority_${mod}`])
-					return opt?.color ? keyStyle(opt.color) : {}
-				},
-			},
-			selected_cue_off_live: {
-				type: 'boolean',
-				name: 'Selected cue is not the live cue',
-				defaultStyle: { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) },
-				options: [],
-				callback: () => this.cursorOffset() !== 0,
-			},
-			eos_connected: {
-				type: 'boolean',
-				name: 'Eos desk connected (read-only reader)',
-				defaultStyle: { bgcolor: combineRgb(22, 163, 74), color: combineRgb(255, 255, 255) },
-				options: [],
-				callback: () => (this.eos ? this.cues.length > 0 || this.liveCue !== null : false),
-			},
-			connected: {
-				type: 'boolean',
-				name: 'Connected',
-				defaultStyle: { bgcolor: combineRgb(22, 163, 74), color: combineRgb(255, 255, 255) },
-				options: [],
-				callback: () => this.connected,
-			},
-		}
-
-		const variables: CompanionVariableDefinition[] = [
-			{ variableId: 'cue_outstanding', name: 'Cue Notes outstanding' },
-			{ variableId: 'work_outstanding', name: 'Work Notes outstanding' },
-			{ variableId: 'production_outstanding', name: 'Production Notes outstanding' },
-			{ variableId: 'electrician_outstanding', name: 'Electrician Notes outstanding' },
-			{ variableId: 'station_name', name: 'Station name' },
-			{ variableId: 'production_name', name: 'Production name' },
-			{ variableId: 'connected', name: 'Connected (true/false)' },
-			{ variableId: 'pairing_code', name: 'Pairing code while pairing is in progress (put it on a button)' },
-			{ variableId: 'cue_live', name: 'Eos: live cue number (our read-only reader)' },
-			{ variableId: 'cue_live_label', name: 'Eos: label of the live cue' },
-			{ variableId: 'selected_cue', name: 'Selected cue: the cue the next note lands on (live unless you stepped)' },
-			{ variableId: 'selected_cue_label', name: 'Selected cue label' },
-			{ variableId: 'selected_cue_offset', name: 'Selected cue offset from live (0 = live)' },
-			{ variableId: 'eos_connected', name: 'Eos desk connected (true/false)' },
-		]
-
-		this.setActionDefinitions(actions)
-		this.setFeedbackDefinitions(feedbacks)
-		this.setVariableDefinitions(variables)
-		this.setPresetDefinitions(this.buildPresets())
-	}
-
-	/**
-	 * One ready-made key per module × type from THIS show: the New note action
-	 * with that type, the matching chip colour, and the live cue on the face.
-	 */
-	/**
-	 * Ready-made keys in the house look (N mark top-left, text right-aligned):
-	 *  - New note · <Module>: one per type of THIS show, coloured like the chip
-	 *  - Go to module: one per module, module colour
-	 *  - Selected cue: ◀ / ▶ / = live and two display keys
-	 */
-	private buildPresets(): CompanionPresetDefinitions {
-		const presets: CompanionPresetDefinitions = {}
-		const L = this.label
-		const cueVar = `$(${L}:selected_cue)`
-		// Key faces have room for ~5 letters beside the N. Known types get the
-		// abbreviation the booth already uses; multi-word customs become initials;
-		// anything else is clipped to 5 letters.
-		const ABBR: Record<string, string> = {
-			cue: 'CUE',
-			director: 'DIR',
-			choreographer: 'CHOR',
-			designer: 'DSGN',
-			stage_manager: 'SM',
-			associate: 'ASSOC',
-			assistant: 'ASST',
-			spot: 'SPOT',
-			programmer: 'PROG',
-			production: 'PROD',
-			paperwork: 'PAPER',
-			think: 'THINK',
-			work: 'WORK',
-			lighting: 'LX',
-			focus: 'FOCUS',
-			electrics: 'ELEC',
-			rigging: 'RIG',
-			sound: 'SND',
-			scenic: 'SET',
-			props: 'PROPS',
-		}
-		const short = (value: string, label: string) => {
-			if (ABBR[value]) return ABBR[value]
-			const words = label.trim().split(/\s+/)
-			if (words.length > 1)
-				return words
-					.map((w) => w[0])
-					.join('')
-					.toUpperCase()
-			return label.toUpperCase().slice(0, 5)
-		}
-
-		for (const m of MODULES) {
-			const types = this.options?.[m.id]?.types ?? []
-			for (const t of types) {
-				presets[`new_${m.id}_${t.value}`] = {
-					type: 'button',
-					category: `New note · ${m.label}`,
-					name: `${t.label} (${m.label})`,
-					style: brandedStyle(`ADD\n${short(t.value, t.label)}\nNOTE`, t.color ?? MODULE_COLORS[m.id], 'auto'),
-					steps: [
-						{
-							down: [
-								{
-									actionId: 'open_note_editor',
-									options: {
-										module: m.id,
-										[`type_${m.id}`]: t.value,
-										[`priority_${m.id}`]: 'medium',
-										cueNumber: cueVar,
-									},
-								},
-							],
-							up: [],
-						},
-					],
-					feedbacks: [],
-				}
-			}
-			presets[`goto_${m.id}`] = {
-				type: 'button',
-				category: 'Go to module',
-				name: `Go to ${m.label}`,
-				// Same grammar as the note keys: two short words, module colour, N in the corner.
-				style: brandedStyle(
-					`${({ cue: 'CUE', work: 'WORK', production: 'PROD', electrician: 'ELEC' } as Record<string, string>)[m.id]}\nNOTES`,
-					MODULE_COLORS[m.id],
-					18,
-				),
-				steps: [{ down: [{ actionId: 'tab_jump_module', options: { module: m.id } }], up: [] }],
-				feedbacks: [],
+			if (err.status === 401 || err.status === 402 || err.status === 403 || err.status === 410) {
+				await this.refreshMe()
+			} else if (!(e instanceof ApiError) && this.connected) {
+				// No HTTP status: the network is down. Show it now, not at the next /me check.
+				this.connected = false
+				this.updateStatus(InstanceStatus.ConnectionFailure, describe(e))
+				this.setVariableValues({ connected: 'false' })
+				this.checkFeedbacks('connected')
 			}
 		}
-
-		// Selected-cue keys follow the same grammar: one short word, one number, the
-		// N in the corner. Dark keys; amber while the selection is off the live cue.
-		const dark = '#1f1f1f'
-		const amber = { bgcolor: combineRgb(245, 158, 11), color: combineRgb(0, 0, 0) }
-		const offLive = { feedbackId: 'selected_cue_off_live', options: {}, style: amber }
-		const connected = {
-			feedbackId: 'eos_connected',
-			options: {},
-			style: { bgcolor: combineRgb(0, 70, 0), color: combineRgb(255, 255, 255) },
-		}
-		presets.selected_prev = {
-			type: 'button',
-			category: 'Selected cue',
-			name: 'Selected cue ◀',
-			style: brandedStyle(`◀ CUE\n${cueVar}`, dark, 18),
-			steps: [{ down: [{ actionId: 'selected_cue_prev', options: {} }], up: [] }],
-			feedbacks: [offLive],
-		}
-		presets.selected_next = {
-			type: 'button',
-			category: 'Selected cue',
-			name: 'Selected cue ▶',
-			style: brandedStyle(`CUE ▶\n${cueVar}`, dark, 18),
-			steps: [{ down: [{ actionId: 'selected_cue_next', options: {} }], up: [] }],
-			feedbacks: [offLive],
-		}
-		presets.selected_live = {
-			type: 'button',
-			category: 'Selected cue',
-			name: 'Selected cue = live',
-			style: brandedStyle(`LIVE\n$(${L}:cue_live)`, dark, 18),
-			steps: [{ down: [{ actionId: 'selected_cue_live', options: {} }], up: [] }],
-			feedbacks: [connected],
-		}
-		presets.display_live = {
-			type: 'button',
-			category: 'Selected cue',
-			name: 'Display: live cue',
-			style: brandedStyle(`LIVE\n$(${L}:cue_live)`, '#000000', 18),
-			steps: [{ down: [], up: [] }],
-			// Stays black: green belongs to the "Selected cue = live" key, which does something.
-			feedbacks: [],
-		}
-		presets.display_selected = {
-			type: 'button',
-			category: 'Selected cue',
-			name: 'Display: selected cue',
-			style: brandedStyle(`NOTE\n${cueVar}`, '#000000', 18),
-			steps: [{ down: [], up: [] }],
-			feedbacks: [offLive],
-		}
-		return presets
 	}
 
-	private async ui(body: {
-		command: string
-		module: string
-		status?: string
-		cueNumber?: string
-		type?: string
-		priority?: string
-	}): Promise<void> {
+	async ui(body: UiBody): Promise<void> {
+		const api = this.api
+		if (!api) {
+			this.log('warn', `${body.command} failed: not connected`)
+			return
+		}
 		try {
-			const res = (await this.api.ui(body)) as { prefill?: Record<string, string> }
+			const res = await api.ui(body)
 			this.log(
 				'info',
 				`${body.command} → sent ${JSON.stringify(body)} · server broadcast ${JSON.stringify(res.prefill ?? {})}`,
@@ -782,48 +441,47 @@ class NotesListInstance extends InstanceBase<ModuleConfig> {
 		}
 	}
 
-	private clearTimers(): void {
-		for (const t of this.timers) clearInterval(t)
-		this.timers = []
+	/** Run fn every ms, never overlapping: the next run is scheduled once the previous one has finished. */
+	private loop(ms: number, fn: () => Promise<void>): void {
+		const epoch = this.loopEpoch
+		const schedule = () => {
+			const t = setTimeout(() => {
+				this.timers.delete(t)
+				fn()
+					.catch((e) => this.log('debug', `Poll failed: ${describe(e)}`))
+					.finally(() => {
+						if (epoch === this.loopEpoch) schedule()
+					})
+			}, ms)
+			this.timers.add(t)
+		}
+		schedule()
+	}
+
+	private stopLoops(): void {
+		this.loopEpoch++
+		for (const t of this.timers) clearTimeout(t)
+		this.timers.clear()
 	}
 }
 
-/**
- * One dropdown per module for a field whose choices differ by module, shown only
- * when that module is selected. Companion cannot make one dropdown's choices
- * depend on another option, so this is the idiom.
- */
-function perModuleChoices(
-	field: 'priority' | 'type',
-	label: string,
-	choicesFor: (m: ModuleId) => Opt[],
-	fallbackDefault: string,
-) {
-	return MODULES.map((m) => {
-		const opts = choicesFor(m.id)
-		const choices =
-			field === 'type'
-				? [{ id: '', label: '(none)' }, ...opts.map((o) => ({ id: o.value, label: o.label }))]
-				: opts.map((o) => ({ id: o.value, label: o.label }))
-		// Type defaults to the module's FIRST real type (e.g. Cue), not '(none)':
-		// a fresh key should land a typed note without a visit to the dropdown.
-		const firstReal = choices.find((c) => c.id !== '')?.id ?? ''
-		const def = choices.some((c) => c.id === fallbackDefault && c.id !== '') ? fallbackDefault : firstReal
-		return {
-			type: 'dropdown' as const,
-			id: `${field}_${m.id}`,
-			label: `${label} (${m.label})`,
-			default: def,
-			choices,
-			isVisible: (options: Record<string, unknown>, data: { module: string }) => options.module === data.module,
-			isVisibleData: { module: m.id },
-		}
-	})
+/** Why the Base URL is unusable, or null when it is fine. */
+function checkBaseUrl(baseUrl: string): string | null {
+	try {
+		const u = new URL(baseUrl)
+		return u.protocol === 'https:' || u.protocol === 'http:'
+			? null
+			: `Base URL must start with https:// (got ${u.protocol})`
+	} catch {
+		return `Base URL "${baseUrl}" is not a valid URL`
+	}
 }
 
 function describe(e: unknown): string {
-	const err = e as Partial<ApiError> & { message?: string }
-	return err?.message ?? String(e)
+	const err = e as { message?: string; cause?: { message?: string; code?: string } }
+	// fetch reports network failures as "fetch failed" with the real reason in `cause`.
+	const cause = err?.cause?.code ?? err?.cause?.message
+	return err?.message ? (cause ? `${err.message} (${cause})` : err.message) : String(e)
 }
 
-runEntrypoint(NotesListInstance, [])
+runEntrypoint(NotesListInstance, UpgradeScripts)

@@ -10,9 +10,13 @@ Bitfocus Companion module for [The Notes List](https://thenoteslist.com). Spec: 
 ## Develop
 
 ```bash
-npm install
-npm run build          # → dist/
+corepack enable
+yarn install
+yarn build             # → dist/
+yarn lint
+yarn package           # → installable .tgz
 ```
-Load as a developer module: point Companion's *Developer modules path* at the parent
+
+Load as a developer module: point Companion's _Developer modules path_ at the parent
 folder of this repo (Settings → Developer). See `companion/HELP.md` for user docs and
 `docs/BUTTON_STATIONS.md` in the app repo for the API contract.

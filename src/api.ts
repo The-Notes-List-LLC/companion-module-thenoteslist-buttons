@@ -12,11 +12,53 @@ export class ApiError extends Error {
 	}
 }
 
+type ModuleKey = 'cue' | 'work' | 'production' | 'electrician'
+type Choice = { value: string; label: string; color?: string }
+
+export type PairStartResponse = { code: string; pollSecret: string; expiresAt: string }
+export type PairPollResponse = {
+	status?: 'pending'
+	token?: string
+	station?: { id: string; name: string; productionId: string; productionName: string | null }
+}
+export type MeResponse = {
+	station: { id: string; name: string }
+	production: { id: string; name: string | null }
+	modules: Record<ModuleKey, boolean>
+	options?: Record<ModuleKey, { priorities: Choice[]; types: Choice[] }>
+}
+export type CountsResponse = Record<ModuleKey, { todo: number; review: number; outstanding: number }> & {
+	asOf: string
+}
+export type CreateNoteResponse = {
+	note: { id: string; status: string; priority: string; type: string | null }
+	coerced: Record<string, string | null>
+	replayed: boolean
+}
+export type UiBody = {
+	command: string
+	module: string
+	status?: string
+	cueNumber?: string
+	type?: string
+	priority?: string
+}
+
+const REQUEST_TIMEOUT_MS = 10000
+
 export class StationApi {
+	/** Aborted by abort(): cancels every request still in flight. */
+	private readonly controller = new AbortController()
+
 	constructor(
 		private baseUrl: string,
 		private token: string | null,
 	) {}
+
+	/** Cancel in-flight requests (settings saved or connection removed). */
+	abort(): void {
+		this.controller.abort()
+	}
 
 	setToken(token: string | null): void {
 		this.token = token
@@ -31,9 +73,11 @@ export class StationApi {
 			if (!this.token) throw new ApiError(401, 'unauthorized', 'Not paired')
 			headers.authorization = `Bearer ${this.token}`
 		}
-		// fetch is global in Companion's node18 runtime (experimental flag only, no warning).
-		// eslint-disable-next-line n/no-unsupported-features/node-builtins
-		const res = await fetch(`${this.baseUrl.replace(/\/$/, '')}${path}`, { ...init, headers })
+		const res = await fetch(`${this.baseUrl.replace(/\/$/, '')}${path}`, {
+			...init,
+			headers,
+			signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
+		})
 		const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
 		if (!res.ok) {
 			throw new ApiError(
@@ -45,40 +89,21 @@ export class StationApi {
 		return body as T
 	}
 
-	async pairStart() {
-		return this.call<{ code: string; pollSecret: string; expiresAt: string }>(
-			'/api/stations/pair/start',
-			{ method: 'POST' },
+	async pairStart(): Promise<PairStartResponse> {
+		return this.call<PairStartResponse>('/api/stations/pair/start', { method: 'POST' }, false)
+	}
+	async pairPoll(code: string, pollSecret: string): Promise<PairPollResponse> {
+		return this.call<PairPollResponse>(
+			'/api/stations/pair/poll',
+			{ method: 'POST', body: JSON.stringify({ code, pollSecret }) },
 			false,
 		)
 	}
-	async pairPoll(code: string, pollSecret: string) {
-		return this.call<{
-			status?: 'pending'
-			token?: string
-			station?: { id: string; name: string; productionId: string; productionName: string | null }
-		}>('/api/stations/pair/poll', { method: 'POST', body: JSON.stringify({ code, pollSecret }) }, false)
+	async me(): Promise<MeResponse> {
+		return this.call<MeResponse>('/api/stations/me')
 	}
-	async me() {
-		return this.call<{
-			station: { id: string; name: string }
-			production: { id: string; name: string | null }
-			modules: Record<'cue' | 'work' | 'production' | 'electrician', boolean>
-			options?: Record<
-				'cue' | 'work' | 'production' | 'electrician',
-				{
-					priorities: Array<{ value: string; label: string; color?: string }>
-					types: Array<{ value: string; label: string; color?: string }>
-				}
-			>
-		}>('/api/stations/me')
-	}
-	async counts() {
-		return this.call<
-			Record<'cue' | 'work' | 'production' | 'electrician', { todo: number; review: number; outstanding: number }> & {
-				asOf: string
-			}
-		>('/api/stations/counts')
+	async counts(): Promise<CountsResponse> {
+		return this.call<CountsResponse>('/api/stations/counts')
 	}
 	async createNote(body: {
 		module: string
@@ -87,30 +112,22 @@ export class StationApi {
 		type?: string
 		id: string
 		cueNumber?: string
-	}) {
-		return this.call<{
-			note: { id: string; status: string; priority: string; type: string | null }
-			coerced: Record<string, string | null>
-			replayed: boolean
-		}>('/api/stations/notes', { method: 'POST', body: JSON.stringify(body) })
+	}): Promise<CreateNoteResponse> {
+		return this.call<CreateNoteResponse>('/api/stations/notes', { method: 'POST', body: JSON.stringify(body) })
 	}
-	async openNoteEditor(module: string, cueNumber?: string) {
+	async openNoteEditor(module: string, cueNumber?: string): Promise<{ sent: boolean }> {
 		return this.ui({ command: 'open_note_editor', module, cueNumber })
 	}
-	async ui(body: {
-		command: string
-		module: string
-		status?: string
-		cueNumber?: string
-		type?: string
-		priority?: string
-	}) {
-		return this.call<{ sent: boolean }>('/api/stations/ui', { method: 'POST', body: JSON.stringify(body) })
+	async ui(body: UiBody): Promise<{ sent: boolean; prefill?: Record<string, string> }> {
+		return this.call<{ sent: boolean; prefill?: Record<string, string> }>('/api/stations/ui', {
+			method: 'POST',
+			body: JSON.stringify(body),
+		})
 	}
-	async revokeSelf() {
+	async revokeSelf(): Promise<{ revoked: boolean }> {
 		return this.call<{ revoked: boolean }>('/api/stations/me', { method: 'DELETE' })
 	}
-	async setLastStatus(status: string) {
+	async setLastStatus(status: string): Promise<{ note: { id: string; status: string } }> {
 		return this.call<{ note: { id: string; status: string } }>('/api/stations/notes/last/status', {
 			method: 'POST',
 			body: JSON.stringify({ status }),

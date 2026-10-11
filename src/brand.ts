@@ -3,7 +3,7 @@
  * except a 20 px white script "N" at top-left (Companion stretches any png64
  * to the key, so the image must already be key-sized).
  */
-import { combineRgb } from '@companion-module/base'
+import { combineRgb, type CompanionButtonStyleProps } from '@companion-module/base'
 
 export const N_PNG64 =
 	'iVBORw0KGgoAAAANSUhEUgAAAEgAAABICAYAAABV7bNHAAABLklEQVR42u3VvyvEcRzH8eOW25VFkjKQzWX0YzVYlJSFTCblFhksBmxksF0KpRRlOKUoRlaLP8Ag+bEZLF/PT97DuVGZPs9HPdP3c7fcq+/3q1SSJEmS9M+KouiiEZqmeZqjA5qMz8fpiBo0ldMwM3RLr3RPddoufqSBOmOw5JMe6YbacxhnMX74G01QOc634nyN+uiLzqgnDUMdudw9dzHEXtPZKH3QJW3GMOnOquT43jmJgZ7jMarQAx3TMp3SOw3n+mLupv14B83SRgw2SLV49Bq5jlNuuV6KcQ7jej2uF3Icpy0NQTu0SlcxxlO6q+I79Tir5jrQdfHbC401fec8zgdyfcR6aZcu4m9/y+dDtJLNv3RJkiRJkiRJkiRJkiRJkiRJkiRJkiTpD74By2Z6vXgbfSsAAAAASUVORK5CYII='
@@ -36,7 +36,11 @@ export function keyStyle(hex: string): { bgcolor: number; color: number } {
 }
 
 /** The house key look: N in the top-left, text right-aligned, no Companion top bar. */
-export function brandedStyle(text: string, hex: string, size: 'auto' | 14 | 18 | 24 = 'auto') {
+export function brandedStyle(
+	text: string,
+	hex: string,
+	size: 'auto' | 14 | 18 | 24 = 'auto',
+): CompanionButtonStyleProps {
 	// 'auto' shrinks long words instead of wrapping them mid-word.
 	return {
 		text,

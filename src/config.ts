@@ -3,8 +3,8 @@ import type { SomeCompanionConfigField } from '@companion-module/base'
 export interface ModuleConfig {
 	baseUrl: string
 	startPairing: boolean
-	/** Filled by pairing and kept in the stored config; deliberately NOT a visible field. */
-	token: string
+	/** Where the station token lived in 1.0.0; the first upgrade script moves it into the secrets. */
+	token?: string
 	stationName: string
 	productionName: string
 	/** Written by the module while pairing; shown live in the settings window. */
@@ -15,6 +15,12 @@ export interface ModuleConfig {
 	eosCueList: number
 	/** Keep the cursor's offset from live when the desk fires the next cue (default: snap back to live). */
 	eosKeepOffset: boolean
+}
+
+/** Kept in Companion's secrets store, so it stays out of exports. */
+export interface ModuleSecrets {
+	/** Filled by pairing. */
+	token?: string
 }
 
 export const DEFAULT_BASE_URL = 'https://thenoteslist.com'
@@ -32,10 +38,11 @@ export function getConfigFields(
 	view: PairingView = { code: null, expiresAt: null, stationName: '', productionName: '', connected: false },
 ): SomeCompanionConfigField[] {
 	const minutesLeft = view.expiresAt ? Math.max(0, Math.round((view.expiresAt - Date.now()) / 60000)) : 0
+	const esc = (v: string) => v.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`)
 	const banner = view.code
 		? `<div style="font-size:28px;font-weight:700;letter-spacing:0.25em;font-family:monospace;padding:12px 16px;border:2px solid #f59e0b;border-radius:8px;display:inline-block">${view.code}</div><div style="margin-top:8px">Type this into The Notes List → the show → <b>Settings → Button stations</b>. Expires in about ${minutesLeft} min. Close and reopen this window to refresh.</div>`
 		: view.connected
-			? `<b>Paired</b> as "${view.stationName}" on ${view.productionName || 'the production'}. Tick "Start pairing" to pair a different show.`
+			? `<b>Paired</b> as "${esc(view.stationName)}" on ${view.productionName ? esc(view.productionName) : 'the production'}. Tick "Start pairing" to pair a different show.`
 			: 'Not paired yet. Tick "Start pairing" below, save, then reopen this window to see the code.'
 	return [
 		// --- The Notes List -------------------------------------------------------
@@ -60,8 +67,15 @@ export function getConfigFields(
 		{
 			type: 'textinput',
 			id: 'pairingCode',
-			label: 'Pairing code (fills in by itself; type it into the app, then it clears)',
+			label: 'Pairing code (read-only: the module fills this in and ignores anything typed here)',
 			width: 8,
+			default: '',
+		},
+		{
+			type: 'secret-text',
+			id: 'token',
+			label: 'Station token (filled in by pairing; kept out of exports)',
+			width: 12,
 			default: '',
 		},
 		{
