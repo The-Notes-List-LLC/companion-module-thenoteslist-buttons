@@ -15,7 +15,7 @@ A station belongs to one production. To move to another show, revoke it in Setti
 
 Enter the desk's IP in **Eos desk IP** (ticking **Use TCP SLIP** is the safe choice on Eos 3.1+: it uses port 3037, which is SLIP whatever the desk's OSC TCP format is set to; unticked, it uses port 3032, which only works with that format set to OSC 1.0. If the two disagree, the log says "is the desk expecting SLIP?"). Enable OSC RX/TX on the desk under Setup → System → Show Control → OSC. This module then follows the live cue of cue list 1 (change **Cue list** if needed), fetches the cues around it first, and walks the whole list in the background one request at a time (a 1700-cue show takes under a minute and the desk never sees a burst). It subscribes as soon as it connects, so cue edits on the desk (renumber, insert, relabel) update the cache by themselves; the wheel and channel traffic that comes with a subscription is ignored. It pings the desk every 5 s and reconnects when the desk stops answering for 12 s (pulled cable, desk reboot); while the desk is gone the cue variables are blank, so a note never lands on a frozen cue. It never sends a command to the desk. **Eos: reload the cue list** is there if you ever want to force a fresh read.
 
-**Selected cue.** Notes land on the selected cue, which normally follows the live cue. If a press comes late, **Selected cue ◀** / **▶** move the selection back or forward through the cached list without touching the console; **Selected cue = live** follows the running cue again. When the desk fires the next cue the selection returns to live (tick **Keep cursor offset** to hold the offset instead). The selection is held as a cue number, so an insert or delete on the desk never moves it to a different cue; steps and the offset count base cues only (parts are skipped). Key faces: `$(<connection label>:selected_cue)` (with `selected_cue_label`, or `selected_cue_label_short` for the first 7 characters), `$(<connection label>:cue_live)`; the **Selected cue is not the live cue** feedback turns a key amber while stepped, and **Selected cue is the live cue** turns the = live key green. With no desk connected the = live preset reads NO DESK. Presets under "Selected cue" include two display-only keys (live cue, selected cue).
+**Selected cue.** Notes land on the selected cue, which normally follows the live cue. If a press comes late, **Selected cue ◀** / **▶** move the selection back or forward through the cached list without touching the console; **Selected cue = live** follows the running cue again. When the desk fires the next cue the selection returns to live (tick **Keep cursor offset** to hold the offset instead). The selection is held as a cue number, so an insert or delete on the desk never moves it to a different cue; steps and the offset count base cues only (parts are skipped). Key faces: `$(<connection label>:selected_cue)` (with `selected_cue_label`, or `selected_cue_label_short` for the first 7 characters), `$(<connection label>:cue_live)`; the **Selected cue is not the live cue** feedback turns a key amber while stepped, and **Selected cue is the live cue** turns the = live key green. With no desk connected the = live preset reads NO DESK. Presets under "Selected cue" include a display-only key showing the selected cue and the start of its label.
 
 ### Other consoles
 
@@ -33,7 +33,14 @@ Everything acts on **your own open browser tab** of The Notes List, on the page 
 
 ## Presets
 
-Under **Presets**: one key per note type of your show ("New note · Cue Notes" → ADD CUE NOTE, ADD SM NOTE…) in the house look (N mark, chip colour), a **Go to module** key per module, and the **Selected cue** keys. Drag them onto the deck.
+Under **Presets**, in the order you reach for them in tech:
+
+1. **Selected cue**: ◀ CUE, CUE ▶, = live and a display key (amber while stepped off live; = live is green on the live cue and reads NO DESK without one).
+2. **New note · <module>**: one key per note type of your show (ADD / CUE, ADD / SM…) in the type's chip colour.
+3. **Highlighted note · <module>**: colour says what a key does. SET DONE is green, SET CANCL red, SET REVW (Work Notes) slate; NEXT, PREV, TO DO, UNDO and REDO are dark keys lettered in the module colour.
+4. **Go to module**: module colour, with that module's open count (WORK / 3 OPEN).
+
+Every key keeps its text on the bottom edge, clear of the N, so a row of keys lines up. Drag them onto the deck. Keys dragged from an earlier version keep their old look: drag them again to pick up a new one.
 
 ## Feedbacks
 
@@ -45,3 +52,5 @@ Under **Presets**: one key per note type of your show ("New note · Cue Notes" �
 ## Variables
 
 `$(<connection label>:cue_outstanding)`, `work_outstanding`, `production_outstanding`, `electrician_outstanding`, `station_name`, `production_name`, `pairing_code`, `connected`.
+
+Eos: `cue_live`, `cue_live_label`, `selected_cue`, `selected_cue_label`, `selected_cue_label_short` (7 characters, for a key face), `selected_cue_offset` (base cues from live, parts not counted; 0 = live, ? while loading), `eos_connected`.
