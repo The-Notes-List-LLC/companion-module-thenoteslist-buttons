@@ -23,7 +23,7 @@ The **Cue number** box on a New note key is variable-aware, so with another cons
 
 ## Actions
 
-Everything acts on **your own open browser tab** of The Notes List, on the page for the chosen module. Other members' tabs never react.
+Everything acts on **your own open browser tab** of The Notes List, on the page for the chosen module. Other members' tabs never react. With several tabs open on that page, only the one you last clicked into acts; if a key seems to do nothing, click into the tab you want.
 
 - **New note (opens the editor in your tab)** — module, type and priority (this show's real choices), cue number (defaults to the console's live cue). Opens the Add Note dialog prefilled; you finish the text at the keyboard.
 - **Highlight next / previous note** — moves the blue ring through the visible list. Clicking a row in the app also highlights it.
