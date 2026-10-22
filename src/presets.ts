@@ -153,10 +153,18 @@ export function UpdatePresets(self: NotesListInstance): void {
 			status: 'cancelled',
 		})
 		if (m.id === 'work')
-			key('review', 'Mark highlighted note To Approve', 'SET\nTO APR', review, undefined, 'tab_set_highlighted_status', {
-				module: m.id,
-				status: 'review',
-			})
+			key(
+				'review',
+				'Send highlighted note for approval',
+				'SET\nTO APR',
+				review,
+				undefined,
+				'tab_set_highlighted_status',
+				{
+					module: m.id,
+					status: 'review',
+				},
+			)
 		key('todo', 'Highlighted note back to To Do', 'SET\nTO DO', neutral, mod, 'tab_set_highlighted_status', {
 			module: m.id,
 			status: 'todo',
