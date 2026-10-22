@@ -9,7 +9,7 @@ import type { NotesListInstance } from './main.js'
  * lays them out:
  *  1 Selected cue: ◀ / ▶ / = live and a display key with the cue's label
  *  2 New note · <Module>: one per type of THIS show, coloured like the chip
- *  3 Highlighted note · <Module>: next, prev, set Done / Cancl / Revw / To Do, undo, redo
+ *  3 Highlighted note · <Module>: next, prev, set Done / Cancl / To Apr / To Do, undo, redo
  *  4 Go to module: one per module, with its open count
  */
 export function UpdatePresets(self: NotesListInstance): void {
@@ -117,7 +117,7 @@ export function UpdatePresets(self: NotesListInstance): void {
 	}
 
 	// Working the list in the open tab. Colour says what a key DOES: green
-	// completes, red cancels, slate sends to review. Everything else is a dark
+	// completes, red cancels, slate sends it To Approve. Everything else is a dark
 	// key whose text carries the module colour, so a NEXT for Work still reads
 	// as Work and nothing looks like a status change that is not one.
 	for (const m of MODULES) {
@@ -153,7 +153,7 @@ export function UpdatePresets(self: NotesListInstance): void {
 			status: 'cancelled',
 		})
 		if (m.id === 'work')
-			key('review', 'Mark highlighted note in review', 'SET\nREVW', review, undefined, 'tab_set_highlighted_status', {
+			key('review', 'Mark highlighted note To Approve', 'SET\nTO APR', review, undefined, 'tab_set_highlighted_status', {
 				module: m.id,
 				status: 'review',
 			})

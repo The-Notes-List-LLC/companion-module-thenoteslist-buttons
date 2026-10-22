@@ -5,7 +5,7 @@ import type { NotesListInstance } from './main.js'
 const STATUSES = [
 	{ id: 'complete', label: 'Complete' },
 	{ id: 'cancelled', label: 'Cancelled' },
-	{ id: 'review', label: 'In Review (Work Notes only)' },
+	{ id: 'review', label: 'To Approve (Work Notes only)' },
 	{ id: 'todo', label: 'Back to To Do' },
 ]
 

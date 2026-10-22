@@ -27,7 +27,7 @@ Everything acts on **your own open browser tab** of The Notes List, on the page 
 
 - **New note (opens the editor in your tab)** — module, type and priority (this show's real choices), cue number (defaults to the console's live cue). Opens the Add Note dialog prefilled; you finish the text at the keyboard.
 - **Highlight next / previous note** — moves the blue ring through the visible list. Clicking a row in the app also highlights it.
-- **Set status of highlighted note** — Complete, Cancelled, In Review (Work Notes only) or back to To Do.
+- **Set status of highlighted note** — Complete, Cancelled, To Approve (Work Notes only) or back to To Do.
 - **Undo / Redo**.
 - **Go to module** — navigates your tab to another module of the same show.
 
@@ -37,7 +37,7 @@ Under **Presets**, in the order you reach for them in tech:
 
 1. **Selected cue**: ◀ CUE, CUE ▶, = live and a display key (amber while stepped off live; = live is green on the live cue and reads NO DESK without one).
 2. **New note · <module>**: one key per note type of your show (ADD / CUE, ADD / SM…) in the type's chip colour.
-3. **Highlighted note · <module>**: colour says what a key does. SET DONE is green, SET CANCL red, SET REVW (Work Notes) slate; NEXT, PREV, TO DO, UNDO and REDO are dark keys lettered in the module colour.
+3. **Highlighted note · <module>**: colour says what a key does. SET DONE is green, SET CANCL red, SET TO APR (Work Notes) slate; NEXT, PREV, TO DO, UNDO and REDO are dark keys lettered in the module colour.
 4. **Go to module**: module colour, with that module's open count (WORK / 3 OPEN).
 
 Every key keeps its text on the bottom edge, clear of the N, so a row of keys lines up. Drag them onto the deck. Keys dragged from an earlier version keep their old look: drag them again to pick up a new one.
