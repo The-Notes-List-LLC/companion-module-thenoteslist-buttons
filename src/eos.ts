@@ -149,6 +149,8 @@ export class EosReader implements CueSheet {
 	private countWaits: CountWait[] = []
 	private gotCount = false
 	private filterTimer: NodeJS.Timeout | null = null
+	/** Bumped whenever the whole cache is thrown away (connect, reload, count change): readers of the cache start over. */
+	private epoch = 0
 
 	constructor(
 		private readonly host: string,
@@ -194,6 +196,37 @@ export class EosReader implements CueSheet {
 		return this.baseByNumber.get(number)?.index
 	}
 
+	/** The Eos cue list this reader follows. */
+	listNumber(): number {
+		return this.cueList
+	}
+
+	/** Changes every time the whole cache is cleared, so a consumer can tell a fresh walk from an edit. */
+	cacheEpoch(): number {
+		return this.epoch
+	}
+
+	/**
+	 * The cache holds the whole list right now: the walk has finished, every index is
+	 * cached, and no cue read is still waiting to go out. False while a desk edit's
+	 * re-fetch is in progress (those records are dropped and re-queued). Read-only.
+	 */
+	isComplete(): boolean {
+		if (!this.walkAnnounced || this.count === 0 || this.byIndex.size < this.count) return false
+		// An edit applied by number: its reads are out, or answered and waiting for their count.
+		if (this.editReads.size > 0 || this.countWaits.some((w) => w.numbers.size > 0 || w.slice) || this.slice)
+			return false
+		const pending = (address: string) => address.startsWith('/eos/get/cue/') && !this.isCachedRead(address)
+		return !this.queue.some(pending) && !this.background.some(pending)
+	}
+
+	/** Number → label of every cached base cue (part 0) with a non-empty label, from the indexed records only. */
+	baseLabels(): Map<string, string> {
+		const out = new Map<string, string>()
+		for (const c of this.byIndex.values()) if (c.part === 0 && c.label !== '') out.set(c.number, c.label)
+		return out
+	}
+
 	private putCue(cue: EosCue): void {
 		this.dropCue(cue.index)
 		this.byIndex.set(cue.index, cue)
@@ -208,6 +241,7 @@ export class EosReader implements CueSheet {
 	}
 
 	private clearCues(): void {
+		this.epoch++
 		this.byIndex.clear()
 		this.baseByNumber.clear()
 	}
@@ -225,7 +259,10 @@ export class EosReader implements CueSheet {
 	/** Re-derive every index from cue-number order. */
 	private reindex(records: EosCue[]): void {
 		records.sort(compareCues)
-		this.clearCues()
+		// Not clearCues(): the cache is edited, not thrown away, so the epoch stays (a label
+		// reader sends just what changed instead of the whole list again).
+		this.byIndex.clear()
+		this.baseByNumber.clear()
 		records.forEach((c, i) => this.putCue({ ...c, index: i }))
 	}
 

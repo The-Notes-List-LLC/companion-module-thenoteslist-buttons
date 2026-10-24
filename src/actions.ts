@@ -71,6 +71,13 @@ export function UpdateActions(self: NotesListInstance): void {
 			options: [],
 			callback: async () => self.reloadCueList(),
 		},
+		resend_cue_labels: {
+			name: 'Resend cue labels',
+			description:
+				'Clears a stopped or paused cue-label send and sends every cue label of the selected cue list to The Notes List again, once the desk list is fully read.',
+			options: [],
+			callback: async () => self.resendCueLabels(),
+		},
 		selected_cue_live: {
 			name: 'Selected cue = live (follow the running cue again)',
 			description: 'Puts the selected cue back on the live cue; it then follows the desk as cues fire.',

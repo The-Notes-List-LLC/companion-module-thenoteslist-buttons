@@ -2,11 +2,15 @@
  * Thin client for /api/stations/* (see docs/BUTTON_STATIONS.md in the app repo).
  * Every response is JSON; errors carry { error, message }.
  */
+import type { CueLabelsBody } from './labels.js'
+
 export class ApiError extends Error {
 	constructor(
 		public status: number,
 		public error: string,
 		message: string,
+		/** Seconds from a Retry-After header, when the server sent one. */
+		public retryAfter?: number,
 	) {
 		super(message)
 	}
@@ -42,6 +46,12 @@ export type UiBody = {
 	cueNumber?: string
 	type?: string
 	priority?: string
+}
+
+export type CueLabelsResponse = {
+	written: number
+	skipped: { invalid_number: number; empty_label: number; duplicate: number }
+	truncated: boolean
 }
 
 const REQUEST_TIMEOUT_MS = 10000
@@ -87,10 +97,12 @@ export class StationApi {
 		}
 		const body = (await res.json().catch(() => ({}))) as Record<string, unknown>
 		if (!res.ok) {
+			const retryAfter = Number(res.headers?.get?.('retry-after') ?? NaN)
 			throw new ApiError(
 				res.status,
 				typeof body.error === 'string' ? body.error : 'error',
 				typeof body.message === 'string' ? body.message : res.statusText,
+				Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
 			)
 		}
 		return body as T
@@ -130,6 +142,10 @@ export class StationApi {
 			method: 'POST',
 			body: JSON.stringify(body),
 		})
+	}
+	/** Desk cue labels (#1162): `replace` the whole list, or `upsert` changes ("" removes a label). */
+	async putCueLabels(body: CueLabelsBody): Promise<CueLabelsResponse> {
+		return this.call<CueLabelsResponse>('/api/stations/cue-labels', { method: 'PUT', body: JSON.stringify(body) })
 	}
 	async revokeSelf(): Promise<{ revoked: boolean }> {
 		return this.call<{ revoked: boolean }>('/api/stations/me', { method: 'DELETE' })

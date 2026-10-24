@@ -15,6 +15,8 @@ export interface ModuleConfig {
 	eosCueList: number
 	/** Keep the cursor's offset from live when the desk fires the next cue (default: snap back to live). */
 	eosKeepOffset: boolean
+	/** Send the cue list's labels to the paired show (#1162). Missing (older configs) = on. */
+	sendCueLabels?: boolean
 }
 
 /** Kept in Companion's secrets store, so it stays out of exports. */
@@ -105,6 +107,15 @@ export function getConfigFields(
 			label: 'Keep cursor offset when the desk fires the next cue',
 			width: 12,
 			default: false,
+		},
+		{
+			type: 'checkbox',
+			id: 'sendCueLabels',
+			label: 'Send cue labels to The Notes List',
+			tooltip:
+				"Sends the selected cue list's cue labels to the paired show, where they fill the Cue Label column (the desk's label wins over The Cuelist's). Read from the cue list this module already reads; no extra traffic to the desk.",
+			width: 12,
+			default: true,
 		},
 	]
 }

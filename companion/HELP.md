@@ -17,6 +17,21 @@ Enter the desk's IP in **Eos desk IP** (ticking **Use TCP SLIP** is the safe cho
 
 **Selected cue.** Notes land on the selected cue, which normally follows the live cue. If a press comes late, **Selected cue ◀** / **▶** move the selection back or forward through the cached list without touching the console; **Selected cue = live** follows the running cue again. When the desk fires the next cue the selection returns to live (tick **Keep cursor offset** to hold the offset instead). The selection is held as a cue number, so an insert or delete on the desk never moves it to a different cue; steps and the offset count base cues only (parts are skipped). Key faces: `$(<connection label>:selected_cue)` (with `selected_cue_label`, or `selected_cue_label_short` for the first 7 characters), `$(<connection label>:cue_live)`; the **Selected cue is not the live cue** feedback turns a key amber while stepped, and **Selected cue is the live cue** turns the = live key green. With no desk connected the = live preset reads NO DESK. Presets under "Selected cue" include a display-only key showing the selected cue and the start of its label.
 
+### Cue labels to The Notes List
+
+With **Send cue labels to The Notes List** ticked (the default), the labels of the cue list this module reads (the **Cue list** setting) go to the show this station is paired to, where they fill the **Cue Label** column. Where a cue also has a label from The Cuelist, the desk's label wins. Nothing extra is asked of the desk: the labels come from the list the module already reads. Once the whole list has been read, every label is sent in one go; after that only changes are sent (a relabel, a new cue, a cleared label), about 2 s after the last edit. Untick it to stop sending.
+
+`$(<connection label>:cue_labels_status)` says how it is going:
+
+- `waiting for walk` — the cue list is still being read from the desk (or the desk is not connected).
+- `sending` — a send is in progress, or being retried after a network or server error.
+- `ok <n>` — The Notes List holds the labels of `n` cues.
+- `paused (server off)` — The Notes List has cue labels switched off for now; the module tries again later by itself. (`paused (too soon)` is the same after sending too often.)
+- `stopped: <code>` — The Notes List refused them (for example `401`: the station is no longer paired; `404`: the server does not know about cue labels yet). Nothing more is sent until you save the settings, the desk reconnects, or you press **Resend cue labels**.
+- `off` — the box is unticked.
+
+The **Resend cue labels** action clears a stopped or paused state and sends every label again once the list is fully read.
+
 ### Other consoles
 
 The **Cue number** box on a New note key is variable-aware, so with another console's Companion module you can type its variable there (for example a QLab or grandMA3 cue variable) instead of the Eos cursor.
@@ -30,6 +45,7 @@ Everything acts on **your own open browser tab** of The Notes List, on the page 
 - **Set status of highlighted note** — Complete, Cancelled, To Approve (Work Notes only) or back to To Do.
 - **Undo / Redo**.
 - **Go to module** — navigates your tab to another module of the same show.
+- **Resend cue labels** — sends the desk's cue labels to the show again (see Cue labels above).
 
 ## Presets
 
@@ -53,4 +69,4 @@ Every key keeps its text on the bottom edge, clear of the N, so a row of keys li
 
 `$(<connection label>:cue_outstanding)`, `work_outstanding`, `production_outstanding`, `electrician_outstanding`, `station_name`, `production_name`, `pairing_code`, `connected`.
 
-Eos: `cue_live`, `cue_live_label`, `selected_cue`, `selected_cue_label`, `selected_cue_label_short` (7 characters, for a key face), `selected_cue_offset` (base cues from live, parts not counted; 0 = live, ? while loading), `eos_connected`.
+Eos: `cue_live`, `cue_live_label`, `selected_cue`, `selected_cue_label`, `selected_cue_label_short` (7 characters, for a key face), `selected_cue_offset` (base cues from live, parts not counted; 0 = live, ? while loading), `eos_connected`, `cue_labels_status`.

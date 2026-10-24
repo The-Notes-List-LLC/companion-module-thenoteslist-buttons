@@ -3,6 +3,7 @@ import { ApiError, StationApi, type UiBody } from './api.js'
 import { DEFAULT_BASE_URL, getConfigFields, type ModuleConfig, type ModuleSecrets } from './config.js'
 import { CueCursor } from './cursor.js'
 import { EosReader } from './eos.js'
+import { LabelSender } from './labels.js'
 import { MODULES, type ModuleId, type ModuleOptions } from './choices.js'
 import { UpdateActions } from './actions.js'
 import { UpdateFeedbacks } from './feedbacks.js'
@@ -41,6 +42,23 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 	private eosKey = ''
 	private liveCue: string | null = null
 	private cursor = new CueCursor()
+	/** Desk cue labels → the paired show (#1162). Reads the Eos reader's cache; one request at a time. */
+	private labels = new LabelSender({
+		reader: () => this.eos,
+		send: async (body) => {
+			const api = this.api
+			if (!api) return { status: 401, error: 'not_paired' }
+			try {
+				await api.putCueLabels(body)
+				return { status: 200 }
+			} catch (e) {
+				const err = e as Partial<ApiError>
+				return { status: err.status ?? 0, retryAfter: err.retryAfter, error: err.error }
+			}
+		},
+		log: (level, msg) => this.log(level, msg),
+		setStatus: (status) => this.setVariableValues({ cue_labels_status: status }),
+	})
 
 	async init(config: ModuleConfig, _isFirstInit: boolean, secrets: ModuleSecrets): Promise<void> {
 		// Never block init on the network: Companion gives init about 10 s and restarts
@@ -53,6 +71,7 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 		this.stopLoops()
 		this.api?.abort()
 		this.api = null
+		this.labels.destroy()
 		this.eos?.stop()
 		this.eos = null
 	}
@@ -80,6 +99,8 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 		const urlProblem = checkBaseUrl(this.config.baseUrl)
 		if (urlProblem) {
 			this.connected = false
+			// No server to send to: a walked desk shows "stopped: 401" until the URL is fixed.
+			this.labels.configure(this.config.sendCueLabels !== false)
 			this.updateStatus(InstanceStatus.BadConfig, urlProblem)
 			this.setVariableValues({ connected: 'false' })
 			this.checkFeedbacks('connected')
@@ -89,6 +110,8 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 			this.log('warn', 'Base URL uses http: the station token travels unencrypted. Use https unless testing locally.')
 		const token = this.secrets.token || null
 		this.api = new StationApi(this.config.baseUrl, token)
+		// Every save starts the labels over from a full replace (and clears a stop).
+		this.labels.configure(this.config.sendCueLabels !== false)
 
 		if (this.config.startPairing || !token) {
 			// A pairing already in flight (code not yet expired) survives a config
@@ -119,6 +142,8 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 		this.updateStatus(InstanceStatus.Connecting)
 		const paired = await this.refreshMe()
 		if (gen !== this.generation || !paired) return
+		// Just paired (saveConfig does not call configUpdated back): a "not paired" stop no longer applies.
+		this.labels.resume()
 		this.countsFailures = 0
 		// The first counts poll runs now, inside the loop, so it can never overlap the next.
 		this.loop(
@@ -245,6 +270,8 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 			onStatus: (connected, message) => {
 				this.log('debug', `Eos status: ${connected ? 'connected' : 'disconnected'} (${message})`)
 				this.setEosConnected(connected)
+				// A reconnect clears the cache (full replace once walked) and lifts a stop.
+				if (connected) this.labels.resume()
 			},
 			onLive: (num) => {
 				if (num !== this.liveCue) {
@@ -256,10 +283,15 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 				this.liveCue = num
 				this.publishCursor()
 			},
-			onCache: () => this.publishCursor(),
+			onCache: () => {
+				this.publishCursor()
+				this.labels.onCacheChange()
+			},
 			log: (level, msg) => this.log(level, msg),
 		})
 		this.eos.start()
+		// Another desk or list: the sender starts over against the new reader.
+		this.labels.onCacheChange()
 	}
 
 	/**
@@ -322,6 +354,10 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 
 	reloadCueList(): void {
 		this.eos?.reloadList()
+	}
+
+	resendCueLabels(): void {
+		this.labels.resend()
 	}
 
 	/** The cue a New note lands on: the stepped cue, else the live cue. Always a cue number, never a guess. */
