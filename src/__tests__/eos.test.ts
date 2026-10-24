@@ -9,6 +9,8 @@ import type { OscPacket, OscTcpHandlers } from '../osc-tcp.js'
  * and the test answers with the replies Eos sends.
  */
 let sent: string[]
+/** Every request of the test, for the read-only check (tests reset `sent`). */
+let allSent: Array<{ address: string; args: unknown[] }>
 let handlers: OscTcpHandlers
 let destroyed: number
 let logs: string[]
@@ -28,7 +30,10 @@ function reader(list = 1): EosReader {
 		(_host, _port, _slip, h): EosSocket => {
 			handlers = h
 			return {
-				send: (address) => sent.push(address),
+				send: (address, args = []) => {
+					sent.push(address)
+					allSent.push({ address, args: args.map((a) => a.value) })
+				},
 				destroy: () => {
 					destroyed++
 					h.onClose()
@@ -56,11 +61,14 @@ const indexReads = (): number[] =>
 beforeEach(() => {
 	vi.useFakeTimers()
 	sent = []
+	allSent = []
 	destroyed = 0
 	logs = []
 	lives = []
 })
 afterEach(() => {
+	// Read-only, always: nothing that fires a cue, presses a key or types a command line.
+	expect(allSent.filter((s) => /^\/eos\/(key|cmd|newcmd|cue|event)(\/|$)/.test(s.address))).toEqual([])
 	vi.useRealTimers()
 })
 
@@ -72,10 +80,41 @@ async function connected(r: EosReader): Promise<void> {
 }
 
 describe('EosReader', () => {
-	it('subscribes and asks for the count on connect', async () => {
+	it('filters the desk output, then subscribes and asks for the count on connect', async () => {
 		const r = reader()
 		await connected(r)
-		expect(sent.slice(0, 3)).toEqual(['/eos/reset', '/eos/subscribe', '/eos/get/cue/1/count'])
+		expect(sent.slice(0, 5)).toEqual([
+			'/eos/reset',
+			'/eos/filter/clear',
+			'/eos/filter/add',
+			'/eos/subscribe',
+			'/eos/get/cue/1/count',
+		])
+		expect(allSent.find((s) => s.address === '/eos/filter/add')?.args).toEqual([
+			'/eos/out/active/cue/*',
+			'/eos/out/get/cue/*',
+			'/eos/out/notify/cue/*',
+			'/eos/out/ping',
+		])
+		r.stop()
+	})
+
+	it('runs unfiltered when no count comes back through the filter', async () => {
+		const r = reader()
+		await connected(r)
+		sent = []
+		await vi.advanceTimersByTimeAsync(5100)
+		expect(logs.some((l) => l.startsWith('warn') && l.includes('running unfiltered'))).toBe(true)
+		expect(sent.filter((a) => a !== '/eos/ping')).toEqual(['/eos/filter/clear', '/eos/get/cue/1/count'])
+		r.stop()
+	})
+
+	it('keeps the filter when the desk answers through it', async () => {
+		const r = reader()
+		await connected(r)
+		handlers.onPacket(count(0))
+		await vi.advanceTimersByTimeAsync(6000)
+		expect(logs.some((l) => l.includes('running unfiltered'))).toBe(false)
 		r.stop()
 	})
 
@@ -138,17 +177,18 @@ describe('EosReader', () => {
 		r.stop()
 	})
 
-	it('re-reads edited cues by index, including a range from a notify', async () => {
+	it('re-reads edited cues by index when the desk is not in cue-number order', async () => {
 		const r = reader()
 		await connected(r)
 		handlers.onPacket(count(3))
 		for (const [n, i] of [
 			['1', 0],
-			['2', 1],
-			['3', 2],
+			['3', 1],
+			['2', 2],
 		] as const)
 			handlers.onPacket(cue(n, i))
 		await vi.advanceTimersByTimeAsync(500)
+		expect(logs.some((l) => l.startsWith('warn') && l.includes('out of number order'))).toBe(true)
 		sent = []
 		// Notify: a sequence number first, then cue numbers or ranges.
 		handlers.onPacket(msg('/eos/out/notify/cue/1', 99, '2-3'))
@@ -228,6 +268,179 @@ describe('EosReader', () => {
 		handlers.onPacket(cue('5', 0))
 		expect(lives).toEqual([])
 		expect(r.at(0)).toBeUndefined()
+		r.stop()
+	})
+})
+
+/** A by-number reply: Eos sends index -1 (it does not place the cue for us). */
+const byNumber = (num: string, label = `L${num}`, part = 0): OscPacket => cue(num, -1, label, part)
+const notify = (...targets: unknown[]): OscPacket => msg('/eos/out/notify/cue/1/list/0/1', 7, ...targets)
+const sheet = (r: EosReader): string[] => {
+	const out: string[] = []
+	for (let i = 0; i < r.count; i++) {
+		const c = r.at(i)
+		out.push(c ? (c.part ? `${c.number}p${c.part}` : c.number) : '?')
+	}
+	return out
+}
+
+/** Connect and finish a walk of `numbers` (in cue-number order), then forget what was sent. */
+async function walked(r: EosReader, numbers: string[]): Promise<void> {
+	await connected(r)
+	handlers.onPacket(count(numbers.length))
+	numbers.forEach((n, i) => handlers.onPacket(cue(n, i)))
+	await vi.advanceTimersByTimeAsync(500)
+	expect(logs.some((l) => l.includes('walk complete'))).toBe(true)
+	sent = []
+	logs = []
+}
+
+describe('EosReader edits by cue number (after a complete walk)', () => {
+	it('an inserted cue costs one read and a count, and slots in by number', async () => {
+		const r = reader()
+		await walked(r, ['1', '2', '3', '4'])
+		handlers.onPacket(notify('2.5'))
+		await vi.advanceTimersByTimeAsync(100)
+		expect(sent).toEqual(['/eos/get/cue/1/2.5', '/eos/get/cue/1/count'])
+		handlers.onPacket(byNumber('2.5', 'New'))
+		handlers.onPacket(count(5))
+		await vi.advanceTimersByTimeAsync(500)
+		expect(sheet(r)).toEqual(['1', '2', '2.5', '3', '4'])
+		expect(r.indexOf('3')).toBe(3)
+		expect(r.labelOf('2.5')).toBe('New')
+		expect(indexReads()).toEqual([])
+		expect(logs.some((l) => l.includes('re-reading the list'))).toBe(false)
+		r.stop()
+	})
+
+	it('a deleted cue (no reply before the count) leaves the list; later cues move up', async () => {
+		const r = reader()
+		await walked(r, ['1', '2', '3', '4'])
+		handlers.onPacket(notify(3))
+		await vi.advanceTimersByTimeAsync(100)
+		expect(sent).toEqual(['/eos/get/cue/1/3', '/eos/get/cue/1/count'])
+		handlers.onPacket(count(3))
+		await vi.advanceTimersByTimeAsync(500)
+		expect(sheet(r)).toEqual(['1', '2', '4'])
+		expect(r.indexOf('3')).toBeUndefined()
+		expect(r.indexOf('4')).toBe(2)
+		expect(indexReads()).toEqual([])
+		r.stop()
+	})
+
+	it('an added part arrives with its base cue and sits right after it', async () => {
+		const r = reader()
+		await walked(r, ['1', '2', '3'])
+		handlers.onPacket(notify(2))
+		await vi.advanceTimersByTimeAsync(100)
+		expect(sent).toEqual(['/eos/get/cue/1/2', '/eos/get/cue/1/count'])
+		handlers.onPacket(byNumber('2', 'Base'))
+		handlers.onPacket(byNumber('2', 'Part', 1))
+		handlers.onPacket(count(4))
+		await vi.advanceTimersByTimeAsync(500)
+		expect(sheet(r)).toEqual(['1', '2', '2p1', '3'])
+		expect(r.indexOf('3')).toBe(3)
+		expect(indexReads()).toEqual([])
+		r.stop()
+	})
+
+	it('a changed label is re-read by number without moving anything', async () => {
+		const r = reader()
+		await walked(r, ['1', '2', '3'])
+		handlers.onPacket(notify(2))
+		await vi.advanceTimersByTimeAsync(100)
+		handlers.onPacket(byNumber('2', 'Renamed'))
+		handlers.onPacket(count(3))
+		expect(sheet(r)).toEqual(['1', '2', '3'])
+		expect(r.labelOf('2')).toBe('Renamed')
+		expect(sent.length).toBe(2)
+		r.stop()
+	})
+
+	it('a range with a cue we never had reads just that stretch by index, not the whole list', async () => {
+		const r = reader()
+		await walked(r, ['1', '2', '3', '4', '5', '6'])
+		// Desk now: 1, 2, 2.5, 3, 4, 5, 6 ("copy to" landed 2.5 inside the range 2-3).
+		handlers.onPacket(notify('2-3'))
+		await vi.advanceTimersByTimeAsync(100)
+		expect(sent).toEqual(['/eos/get/cue/1/2', '/eos/get/cue/1/3', '/eos/get/cue/1/count'])
+		handlers.onPacket(byNumber('2'))
+		handlers.onPacket(byNumber('3'))
+		handlers.onPacket(count(7))
+		await vi.advanceTimersByTimeAsync(100)
+		expect(indexReads()).toEqual([1, 2, 3])
+		handlers.onPacket(cue('2', 1))
+		handlers.onPacket(cue('2.5', 2, 'Copied'))
+		handlers.onPacket(cue('3', 3))
+		handlers.onPacket(count(7))
+		await vi.advanceTimersByTimeAsync(500)
+		expect(sheet(r)).toEqual(['1', '2', '2.5', '3', '4', '5', '6'])
+		expect(indexReads()).toEqual([1, 2, 3])
+		expect(logs.some((l) => l.includes('re-reading the list'))).toBe(false)
+		r.stop()
+	})
+
+	it('re-walks the whole list only when the targeted reads cannot match the desk count', async () => {
+		const r = reader()
+		await walked(r, ['1', '2', '3', '4'])
+		handlers.onPacket(notify(9))
+		await vi.advanceTimersByTimeAsync(100)
+		// Cue 9 does not answer, yet the desk now has 5 records: we cannot tell where it went.
+		handlers.onPacket(count(5))
+		expect(logs.some((l) => l.includes('out of step after an edit (4 cached, desk has 5)'))).toBe(true)
+		await vi.advanceTimersByTimeAsync(5 * 150 - 50)
+		expect(indexReads()).toEqual([0, 1, 2, 3, 4])
+		r.stop()
+	})
+
+	it('two notices before the first count comes back are both applied, nothing read twice', async () => {
+		const r = reader()
+		await walked(r, ['1', '2', '3', '4'])
+		handlers.onPacket(notify(2))
+		handlers.onPacket(notify(4))
+		await vi.advanceTimersByTimeAsync(100)
+		expect(sent).toEqual(['/eos/get/cue/1/2', '/eos/get/cue/1/4', '/eos/get/cue/1/count'])
+		handlers.onPacket(byNumber('2', 'Two'))
+		handlers.onPacket(count(3)) // 4 was deleted
+		expect(sheet(r)).toEqual(['1', '2', '3'])
+		expect(r.labelOf('2')).toBe('Two')
+		r.stop()
+	})
+
+	it('a notice that arrives after its cue was already read again waits for its own count', async () => {
+		const r = reader()
+		await walked(r, ['1', '2', '3'])
+		handlers.onPacket(notify(2))
+		await vi.advanceTimersByTimeAsync(100) // get 2 and the count are sent
+		handlers.onPacket(notify(2))
+		await vi.advanceTimersByTimeAsync(100) // a second get 2 and count
+		expect(sent).toEqual(['/eos/get/cue/1/2', '/eos/get/cue/1/count', '/eos/get/cue/1/2', '/eos/get/cue/1/count'])
+		handlers.onPacket(byNumber('2', 'First'))
+		handlers.onPacket(count(3))
+		expect(r.labelOf('2')).toBe('First')
+		handlers.onPacket(byNumber('2', 'Second'))
+		handlers.onPacket(count(3))
+		expect(r.labelOf('2')).toBe('Second')
+		expect(sheet(r)).toEqual(['1', '2', '3'])
+		r.stop()
+	})
+
+	it('reads every target of a notice that spans packets', async () => {
+		const r = reader()
+		await walked(r, ['1', '2', '3', '4'])
+		handlers.onPacket(msg('/eos/out/notify/cue/1/list/0/3', 7, 2))
+		handlers.onPacket(msg('/eos/out/notify/cue/1/list/2/3', 4))
+		await vi.advanceTimersByTimeAsync(100)
+		expect(sent).toEqual(['/eos/get/cue/1/2', '/eos/get/cue/1/4', '/eos/get/cue/1/count'])
+		r.stop()
+	})
+
+	it('ignores the later packets of a long cue record (they carry no index or label)', async () => {
+		const r = reader()
+		await connected(r)
+		handlers.onPacket(count(2))
+		handlers.onPacket(msg('/eos/out/get/cue/1/7/0/list/40/45', 1, 'not-a-label'))
+		expect(r.at(1)).toBeUndefined()
 		r.stop()
 	})
 })

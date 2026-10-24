@@ -8,13 +8,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  * never doubles polling, pairing polls never overlap, and network failures are
  * reported instead of leaving stale counts.
  */
-const h = vi.hoisted(() => ({
-	cls: null as null | (new () => any),
-	status: [] as Array<[string, string | undefined]>,
-	vars: {},
-	saved: [] as unknown[],
-	savedSecrets: [] as unknown[],
-}))
+const h = vi.hoisted(() => {
+	const vars: Record<string, unknown> = {}
+	return {
+		cls: null as null | (new () => any),
+		status: [] as Array<[string, string | undefined]>,
+		vars,
+		saved: [] as unknown[],
+		savedSecrets: [] as unknown[],
+	}
+})
 
 vi.mock('@companion-module/base', () => {
 	class InstanceBase {

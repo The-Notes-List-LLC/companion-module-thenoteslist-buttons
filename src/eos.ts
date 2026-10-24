@@ -12,9 +12,17 @@
  * small window of neighbours by index, spaced out. It subscribes on connect
  * (the active-cue output rides the subscription), so edits on the desk arrive
  * as `/eos/out/notify/cue/<list>/...` and only the named cues are re-fetched
- * (plus a re-count for inserts/deletes). The wheel/channel stream that
- * subscribe also brings is simply ignored; the earlier lag came from the burst
- * of 1700 requests, not from being subscribed.
+ * (plus a re-count for inserts/deletes). An OSC output filter, set on connect,
+ * keeps the desk from sending the wheel/channel stream that subscribe brings.
+ *
+ * Once the first walk is complete and the desk's order is confirmed to be
+ * cue-number order (parts right after their base cue), the cache is kept BY
+ * NUMBER: an inserted, deleted or edited cue is re-read by number and the
+ * sheet indexes are derived locally, so an edit costs a few requests instead of
+ * a full re-walk. The desk answers in request order, so when the count that
+ * follows those reads comes back, every reply to them has arrived: a named cue
+ * with no reply was deleted. The full walk runs again only when the local list
+ * and the desk's count still disagree after the targeted reads.
  *
  * Never sends a state-changing command: no /eos/key, /eos/cmd, /eos/cue.
  * `/eos/reset` only clears this client's output state so the desk resends the
@@ -62,6 +70,28 @@ const MAX_CUES = 100000 // sanity cap on the count the desk reports
 // the connection when nothing at all has arrived for a while.
 const PING_MS = 5000
 const SILENCE_MS = 12000
+// OSC output filter (Eos 2.6.1+): the desk sends only messages starting with one of
+// these. A "*" matches the rest of the address (ETC: "/eos/out/param/*" = every
+// message that starts with "/eos/out/param/"). Older desks ignore the command.
+const FILTERS = ['/eos/out/active/cue/*', '/eos/out/get/cue/*', '/eos/out/notify/cue/*', '/eos/out/ping']
+// No count reply this long after connect: assume the filter swallowed it and run unfiltered.
+const FILTER_CHECK_MS = 5000
+
+/** Sheet order: by cue number, parts right after their base cue. */
+function compareCues(a: EosCue, b: EosCue): number {
+	return Number(a.number) - Number(b.number) || a.part - b.part
+}
+
+/** Reads sent between two count requests; the second count's reply settles them. */
+interface CountWait {
+	/** Cues re-read by number for an edit. */
+	numbers: Set<string>
+	/** A range re-read by index because the by-number reads could not place every cue. */
+	slice: { lo: number; hi: number } | null
+	/** Ranges named by the edits, kept for a slice pass if the count still disagrees. */
+	ranges: Array<[number, number]>
+}
+const noWait = (): CountWait => ({ numbers: new Set(), slice: null, ranges: [] })
 
 export class EosReader implements CueSheet {
 	private socket: EosSocket | null = null
@@ -103,6 +133,22 @@ export class EosReader implements CueSheet {
 	private lastRx = 0
 	/** Why this end closed the socket, logged in place of the plain "connection closed". */
 	private closeReason: string | null = null
+	/** The walk confirmed the desk's order is cue-number order: edits are applied by number. */
+	private ordered = false
+	/** Cues being re-read by number for an edit, with how many reads of each are outstanding. */
+	private editReads: Map<string, number> = new Map()
+	/** Records that came back for those reads (base cue plus parts), by number. */
+	private editReplies: Map<string, EosCue[]> = new Map()
+	/** Ranges from notifies not yet attached to a count request. */
+	private editRanges: Array<[number, number]> = []
+	/** A slice re-read by index in progress, and what came back for it. */
+	private slice: { lo: number; hi: number; indexes: Set<number> } | null = null
+	private sliceReplies: EosCue[] = []
+	/** Reads sent since the last count request, and one entry per count request in flight. */
+	private sinceCount: CountWait = noWait()
+	private countWaits: CountWait[] = []
+	private gotCount = false
+	private filterTimer: NodeJS.Timeout | null = null
 
 	constructor(
 		private readonly host: string,
@@ -123,6 +169,7 @@ export class EosReader implements CueSheet {
 		if (this.drainTimer) clearTimeout(this.drainTimer)
 		if (this.publishTimer) clearTimeout(this.publishTimer)
 		if (this.connectTimer) clearTimeout(this.connectTimer)
+		if (this.filterTimer) clearTimeout(this.filterTimer)
 		this.stopPing()
 		// Destroy, not end(): a pending connect or a half-open socket is released now,
 		// not when the OS or the desk gets round to it.
@@ -165,8 +212,27 @@ export class EosReader implements CueSheet {
 		this.baseByNumber.clear()
 	}
 
+	/** Leave by-number mode: drop edit reads in flight (their replies are then ignored). */
+	private resetEdits(): void {
+		this.ordered = false
+		this.editReads.clear()
+		this.editReplies.clear()
+		this.editRanges = []
+		this.slice = null
+		this.sliceReplies = []
+	}
+
+	/** Re-derive every index from cue-number order. */
+	private reindex(records: EosCue[]): void {
+		records.sort(compareCues)
+		this.clearCues()
+		records.forEach((c, i) => this.putCue({ ...c, index: i }))
+	}
+
 	/** Make sure indexes [from, to] are cached (fetches the missing ones, spaced out, ahead of the walk). */
 	ensureRange(from: number, to: number): void {
+		// By number, the cache is complete; an index read would come back at the desk's position, not ours.
+		if (this.ordered) return
 		const lo = Math.max(0, from)
 		const hi = this.count > 0 ? Math.min(this.count - 1, to) : to
 		for (let i = lo; i <= hi; i++) {
@@ -176,6 +242,7 @@ export class EosReader implements CueSheet {
 
 	/** Walk the entire list at low priority (after connect, or on demand after edits on the desk). */
 	reloadList(): void {
+		this.resetEdits()
 		this.clearCues()
 		this.background = []
 		this.walkAnnounced = false
@@ -208,7 +275,11 @@ export class EosReader implements CueSheet {
 				this.closeReason = null
 				// A fresh session: forget the last one's cues and what it was waiting for.
 				this.clearCues()
+				this.resetEdits()
 				this.wantedByNumber.clear()
+				this.sinceCount = noWait()
+				this.countWaits = []
+				this.gotCount = false
 				this.count = 0
 				// A fresh walk: let the end-of-walk retry and report run again.
 				this.walkAnnounced = false
@@ -220,13 +291,26 @@ export class EosReader implements CueSheet {
 					this.errorLogged ? 'debug' : 'info',
 					`Eos: connected to ${this.host}:${port} (read-only), cue list ${this.cueList}`,
 				)
-				// Subscribe at once: the active/pending cue outputs ride the subscription.
-				// The wheel/channel traffic it also brings is ignored; the earlier lag was
-				// the request burst, which the spaced walk below no longer causes.
+				// Filter first, so the desk never starts the wheel/channel stream subscribe
+				// would bring; then subscribe (the active/pending cue outputs ride it).
 				this.enqueue('/eos/reset')
+				this.enqueue('/eos/filter/clear')
+				this.enqueue('/eos/filter/add')
 				this.enqueue('/eos/subscribe')
 				this.enqueue(`/eos/get/cue/${this.cueList}/count`)
 				this.startPing(socket)
+				if (this.filterTimer) clearTimeout(this.filterTimer)
+				this.filterTimer = setTimeout(() => {
+					this.filterTimer = null
+					if (!current() || this.gotCount) return
+					// The desk read the filter differently from ETC's documentation and is
+					// holding back our replies. Run unfiltered rather than not at all.
+					this.ev.log('warn', 'Eos: no reply through the OSC output filter; clearing it and running unfiltered')
+					// The swallowed count will never be answered: forget its place in the line.
+					this.countWaits = []
+					this.enqueue('/eos/filter/clear')
+					this.enqueue(`/eos/get/cue/${this.cueList}/count`)
+				}, FILTER_CHECK_MS)
 			},
 			// Eos answers /eos/get/cue/... with BUNDLES (the cue record plus its fx /
 			// links / actions messages). onPacket unpacks them; nested bundles too.
@@ -269,6 +353,8 @@ export class EosReader implements CueSheet {
 				if (!current()) return
 				if (this.connectTimer) clearTimeout(this.connectTimer)
 				this.connectTimer = null
+				if (this.filterTimer) clearTimeout(this.filterTimer)
+				this.filterTimer = null
 				this.stopPing()
 				const was = this.connected
 				this.connected = false
@@ -359,7 +445,13 @@ export class EosReader implements CueSheet {
 			this.onQueueIdle()
 			return
 		}
-		const args: OscSendArg[] = address === '/eos/subscribe' ? [{ type: 'i', value: 1 }] : []
+		const args: OscSendArg[] =
+			address === '/eos/subscribe'
+				? [{ type: 'i', value: 1 }]
+				: address === '/eos/filter/add'
+					? FILTERS.map((value) => ({ type: 's', value }))
+					: []
+		this.noteSent(address)
 		try {
 			this.socket?.send(address, args)
 		} catch (e) {
@@ -369,7 +461,37 @@ export class EosReader implements CueSheet {
 		this.drainTimer = setTimeout(() => this.drain(), fromBackground ? BACKGROUND_GAP_MS : REQUEST_GAP_MS)
 	}
 
+	/**
+	 * Track which edit reads a count request follows. The desk answers in order, so
+	 * the reply to that count means every read sent before it has been answered.
+	 */
+	private noteSent(address: string): void {
+		const prefix = `/eos/get/cue/${this.cueList}/`
+		if (!address.startsWith(prefix)) return
+		const rest = address.slice(prefix.length)
+		if (rest === 'count') {
+			this.sinceCount.ranges = this.editRanges
+			this.editRanges = []
+			this.countWaits.push(this.sinceCount)
+			this.sinceCount = noWait()
+		} else if (this.editReads.has(rest)) {
+			this.sinceCount.numbers.add(rest)
+		} else if (this.slice && rest.startsWith('index/') && this.slice.indexes.has(Number(rest.slice(6)))) {
+			this.sinceCount.slice = { lo: this.slice.lo, hi: this.slice.hi }
+		}
+	}
+
+	/** Ask for the count after everything queued so far (moving a queued count to the back). */
+	private enqueueCountLast(): void {
+		const address = `/eos/get/cue/${this.cueList}/count`
+		if (this.queued.has(address)) this.queue = this.queue.filter((a) => a !== address)
+		this.queued.delete(address)
+		this.enqueue(address)
+	}
+
 	private isCachedRead(address: string): boolean {
+		// By number, the only index reads are a slice re-read: those records are cached on purpose.
+		if (this.ordered) return false
 		const m = address.match(/\/index\/(\d+)$/)
 		return m !== null && this.byIndex.has(Number(m[1]))
 	}
@@ -399,7 +521,89 @@ export class EosReader implements CueSheet {
 			'info',
 			`Eos: cue list walk complete — ${baseCues} cues cached${parts ? ` (+${parts} parts)` : ''}${gaps}`,
 		)
+		if (missing.length === 0) this.checkOrder()
 		this.ev.onCache()
+	}
+
+	/** A complete walk in cue-number order switches edits to by-number reads. */
+	private checkOrder(): void {
+		for (let i = 1; i < this.count; i++) {
+			const a = this.byIndex.get(i - 1)
+			const b = this.byIndex.get(i)
+			if (!a || !b || compareCues(a, b) >= 0) {
+				this.ev.log(
+					'warn',
+					`Eos: the desk lists cue ${b?.number ?? '?'} after ${a?.number ?? '?'}, out of number order; edits will re-read the whole list`,
+				)
+				return
+			}
+		}
+		this.ordered = true
+	}
+
+	/**
+	 * The count after a batch of edit reads came back: every reply to those reads is in.
+	 * Apply them, then check the list against the desk's count.
+	 */
+	private settleEdits(wait: CountWait): void {
+		const touched = wait.numbers.size > 0 || wait.slice !== null
+		if (touched) {
+			let records = [...this.byIndex.values()]
+			for (const num of wait.numbers) {
+				records = records.filter((c) => c.number !== num)
+				// No reply at all: the cue was deleted.
+				records.push(...(this.editReplies.get(num) ?? []))
+				this.editReplies.delete(num)
+				const left = (this.editReads.get(num) ?? 1) - 1
+				if (left > 0) this.editReads.set(num, left)
+				else this.editReads.delete(num)
+			}
+			if (wait.slice) {
+				const { lo, hi } = wait.slice
+				records = records.filter((c) => Number(c.number) < lo || Number(c.number) > hi)
+				// Keep one record per number/part: a by-number read may have fetched it too.
+				const have = new Set(records.map((c) => `${c.number}/${c.part}`))
+				for (const c of this.sliceReplies) if (!have.has(`${c.number}/${c.part}`)) records.push(c)
+				this.slice = null
+				this.sliceReplies = []
+			}
+			this.reindex(records)
+			this.ev.onCache()
+		}
+		// More edit reads are on the way: judge the list once they are in.
+		if (this.countWaits.length > 0 || this.editReads.size > 0 || this.slice) return
+		if (this.byIndex.size === this.count) {
+			this.ev.log('debug', `Eos: edit applied by number (${wait.numbers.size} cues re-read)`)
+			return
+		}
+		const ranges = wait.ranges
+		const records = [...this.byIndex.values()]
+		// A range ("1-5") can hold cues we never had; read just that stretch by index.
+		const lo = Math.min(...ranges.map((r) => r[0]))
+		const hi = Math.max(...ranges.map((r) => r[1]))
+		const from = records.filter((c) => Number(c.number) < lo).length
+		const inside = records.filter((c) => Number(c.number) >= lo && Number(c.number) <= hi).length
+		const to = Math.min(this.count - 1, from + inside + Math.max(0, this.count - records.length) - 1)
+		if (ranges.length > 0 && !wait.slice && to >= from) {
+			const indexes = new Set<number>()
+			for (let i = from; i <= to; i++) indexes.add(i)
+			this.slice = { lo, hi, indexes }
+			this.ev.log('debug', `Eos: re-reading cues ${lo}-${hi} (indexes ${from}-${to})`)
+			for (const i of indexes) this.enqueue(`/eos/get/cue/${this.cueList}/index/${i}`)
+			this.enqueueCountLast()
+			return
+		}
+		this.ev.log(
+			'info',
+			`Eos: cue list out of step after an edit (${this.byIndex.size} cached, desk has ${this.count}); re-reading the list`,
+		)
+		this.resetEdits()
+		this.clearCues()
+		this.announcedCount = false
+		this.walkAnnounced = false
+		this.walkRetried = false
+		this.ev.onCache()
+		this.walkAll()
 	}
 
 	private onPacket(packet: OscPacket): void {
@@ -431,8 +635,14 @@ export class EosReader implements CueSheet {
 				this.ev.log('warn', `Eos: ignoring an implausible cue count (${String(msg.args?.[0]?.value)})`)
 				return
 			}
+			this.gotCount = true
+			const wait = this.countWaits.shift() ?? noWait()
 			const previous = this.count
 			this.count = n
+			if (this.ordered) {
+				this.settleEdits(wait)
+				return
+			}
 			if (previous === 0 && !this.announcedCount) {
 				this.announcedCount = true
 				this.ev.log(
@@ -456,10 +666,35 @@ export class EosReader implements CueSheet {
 		// args[0] (uint32); args[2] is the label. Part 0 = base cue.
 		if ((m = a.match(/^\/eos\/out\/get\/cue\/([\d.]+)\/([\d.]+)\/(\d+)\/list\/(\d+)\/(\d+)$/))) {
 			if (m[1] !== String(this.cueList)) return
+			// A long record spans several packets; only the first carries index and label.
+			if (m[4] !== '0') return
 			const index = Number(msg.args?.[0]?.value)
 			if (!Number.isInteger(index)) return
 			const raw = msg.args?.[2]?.value
 			const label = typeof raw === 'string' ? raw : ''
+			if (this.ordered) {
+				const record: EosCue = { number: m[2], label, index, part: Number(m[3]) }
+				// A record with no UID is not a cue (assumed: how the desk answers for a deleted one).
+				const real = typeof msg.args?.[1]?.value === 'string' && msg.args[1].value !== ''
+				if (index < 0 && this.editReads.has(m[2])) {
+					if (real) {
+						const list = this.editReplies.get(m[2]) ?? []
+						// A second read of the same cue replaces the first one's records, not adds to them.
+						this.editReplies.set(m[2], [...list.filter((c) => c.part !== record.part), record])
+					}
+					return
+				}
+				if (index >= 0 && this.slice?.indexes.has(index)) {
+					if (real) this.sliceReplies.push(record)
+					return
+				}
+				// Anything else (the live cue read by number) only teaches a label.
+				if (index < 0 && record.part === 0) {
+					this.labels.set(m[2], label)
+					this.ev.onCache()
+				}
+				return
+			}
 			if (index < 0) {
 				// A by-number get (`/eos/get/cue/<list>/<num>`) answers with index -1:
 				// Eos does not place the cue for us. Keep the label only; the walk (or a
@@ -499,10 +734,24 @@ export class EosReader implements CueSheet {
 		// Arguments: a notification sequence number, then cue numbers or ranges ("1-5").
 		if ((m = a.match(/^\/eos\/out\/notify\/cue\/([\d.]+)(?:\/|$)/))) {
 			if (m[1] !== String(this.cueList)) return
+			// A long notify spans packets (/list/<offset>/<total>); only the first starts with the sequence number.
+			const page = a.match(/\/list\/(\d+)\/\d+$/)
+			const targets = (msg.args ?? []).slice(page && page[1] !== '0' ? 0 : 1)
+			// Whole cue numbers arrive as integers, others (1.5) and ranges ("1-5") as strings.
+			const singles: string[] = []
 			const ranges: Array<[number, number]> = []
-			for (const arg of (msg.args ?? []).slice(1)) {
+			for (const arg of targets) {
 				const r = String(arg.value).match(/^([\d.]+)(?:-([\d.]+))?$/)
-				if (r) ranges.push([Number(r[1]), Number(r[2] ?? r[1])])
+				if (!r) continue
+				if (r[2] === undefined) singles.push(r[1])
+				ranges.push([Number(r[1]), Number(r[2] ?? r[1])])
+			}
+			if (this.ordered) {
+				this.readEdited(
+					singles,
+					ranges.filter(([lo, hi]) => lo !== hi),
+				)
+				return
 			}
 			// Cached records in range are re-read by index: a by-number reply carries no position.
 			const refetch: number[] = []
@@ -517,8 +766,29 @@ export class EosReader implements CueSheet {
 				this.enqueue(`/eos/get/cue/${this.cueList}/index/${idx}`)
 			}
 			// Single numbers not cached yet (new cues) are fetched too; the re-count covers range inserts.
-			for (const [lo, hi] of ranges) if (lo === hi) this.enqueue(`/eos/get/cue/${this.cueList}/${lo}`)
+			for (const num of singles) this.enqueue(`/eos/get/cue/${this.cueList}/${num}`)
 			this.enqueue(`/eos/get/cue/${this.cueList}/count`)
 		}
+	}
+
+	/** By number: re-read the named cues (and the cached ones inside a range), then the count. */
+	private readEdited(singles: string[], ranges: Array<[number, number]>): void {
+		const numbers = new Set(singles)
+		for (const c of this.baseByNumber.values()) {
+			const n = Number(c.number)
+			if (ranges.some(([lo, hi]) => n >= lo && n <= hi)) numbers.add(c.number)
+		}
+		for (const num of numbers) {
+			const address = `/eos/get/cue/${this.cueList}/${num}`
+			// Already queued and unsent (an earlier edit, or the live cue): that one read answers this edit too.
+			if (this.queued.has(address)) {
+				if (!this.editReads.has(num)) this.editReads.set(num, 1)
+				continue
+			}
+			this.editReads.set(num, (this.editReads.get(num) ?? 0) + 1)
+			this.enqueue(address)
+		}
+		this.editRanges.push(...ranges)
+		this.enqueueCountLast()
 	}
 }
