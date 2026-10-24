@@ -59,15 +59,19 @@ type Reply = { status?: number; body?: unknown } | 'hang' | 'network'
 /** Scripted server: a handler per path; records every call. */
 let routes: Record<string, (n: number) => Reply>
 let calls: string[]
+/** Full request URLs, for which server a call went to. */
+let urls: string[] = []
 let hanging: Array<() => void>
 
 function mockFetch() {
 	calls = []
+	urls = []
 	hanging = []
 	sentAuth = []
 	vi.stubGlobal('fetch', async (url: string, init?: { headers?: Record<string, string> }) => {
 		const path = new URL(url).pathname
 		calls.push(path)
+		urls.push(url)
 		if (init?.headers?.authorization) sentAuth.push(init.headers.authorization)
 		const n = calls.filter((p) => p === path).length
 		const r = routes[path]?.(n) ?? { status: 404, body: { error: 'not_found' } }
@@ -199,6 +203,22 @@ describe('pairing', () => {
 		await inst.configUpdated(UNPAIRED)
 		await vi.advanceTimersByTimeAsync(20_000)
 		expect(count('/api/stations/pair/poll')).toBe(1)
+	})
+
+	it('keeps the code on a re-save, but starts over on the new server when the Base URL changes', async () => {
+		routes['/api/stations/pair/poll'] = () => ({ status: 202, body: { status: 'pending' } })
+		await inst.configUpdated(UNPAIRED)
+		await inst.configUpdated(UNPAIRED)
+		expect(count('/api/stations/pair/start')).toBe(1)
+		await inst.configUpdated({ ...UNPAIRED, baseUrl: 'https://other.test' })
+		await vi.advanceTimersByTimeAsync(3_500)
+		expect(urls.filter((u) => u.endsWith('/pair/start'))).toEqual([
+			'https://notes.test/api/stations/pair/start',
+			'https://other.test/api/stations/pair/start',
+		])
+		const polls = urls.filter((u) => u.endsWith('/pair/poll'))
+		expect(polls.length).toBeGreaterThan(0)
+		expect(polls.every((u) => u.startsWith('https://other.test/'))).toBe(true)
 	})
 
 	it('starts the paired session itself after a successful pair', async () => {

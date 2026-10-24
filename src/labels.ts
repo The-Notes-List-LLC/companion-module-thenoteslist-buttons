@@ -201,6 +201,13 @@ export class LabelSender {
 			if (this.dirty) this.onCacheChange()
 			return
 		}
+		if (res.error === 'not_paired') {
+			// Expected before the station is paired: wait quietly; pairing calls resume().
+			this.stoppedCode = s
+			this.clearTimers()
+			this.setStatus('waiting for pairing')
+			return
+		}
 		if (STOP_CODES.has(s)) {
 			this.stoppedCode = s
 			this.clearTimers()

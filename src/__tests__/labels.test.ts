@@ -312,4 +312,19 @@ describe('LabelSender', () => {
 		await walked({ '1': 'Preset' })
 		expect(sent).toHaveLength(1)
 	})
+
+	// Value: protects=a freshly added, unpaired station never warns "refused ... stopped" and still sends once paired;
+	// fails_when=not_paired is treated as a real refusal again, or pairing no longer lifts the wait; why_new=first local
+	// install logged a 401 warning before pairing; seam=LabelSender with a fake source; no_claim=main.ts token check
+	it('waits quietly for pairing instead of warning, and sends the full list once resumed', async () => {
+		sender.configure(true)
+		replies = [{ status: 401, error: 'not_paired' }]
+		await walked({ '1': 'A', '2': 'B' })
+		expect(status()).toBe('waiting for pairing')
+		expect(logs.filter((l) => l.startsWith('warn'))).toEqual([])
+		sender.resume()
+		await vi.advanceTimersByTimeAsync(0)
+		expect(sent.map((b) => b.mode)).toEqual(['replace', 'replace'])
+		expect(status()).toBe('ok 2')
+	})
 })

@@ -34,7 +34,8 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 	private timers: Set<NodeJS.Timeout> = new Set()
 	/** Counts polls failed in a row (network or server error); drives the backoff. */
 	private countsFailures = 0
-	private pairing: { code: string; pollSecret: string; expiresAt: number } | null = null
+	/** baseUrl: the server the code was issued by; a code means nothing to another server. */
+	private pairing: { code: string; pollSecret: string; expiresAt: number; baseUrl: string } | null = null
 	// Cue cursor (#907): the desk's list (the reader is the CueSheet), the live
 	// cue, and the cue number the operator has stepped to.
 	private eos: EosReader | null = null
@@ -47,7 +48,8 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 		reader: () => this.eos,
 		send: async (body) => {
 			const api = this.api
-			if (!api) return { status: 401, error: 'not_paired' }
+			// Not paired yet: do not ask the server (it can only say 401). Pairing lifts the wait.
+			if (!api || !this.secrets.token) return { status: 401, error: 'not_paired' }
 			try {
 				await api.putCueLabels(body)
 				return { status: 200 }
@@ -115,7 +117,9 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 
 		if (this.config.startPairing || !token) {
 			// A pairing already in flight (code not yet expired) survives a config
-			// re-save: keep polling it instead of minting a new code.
+			// re-save: keep polling it instead of minting a new code. Not across a
+			// Base URL change: the new server has never heard of that code.
+			if (this.pairing && this.pairing.baseUrl !== this.config.baseUrl) this.pairing = null
 			if (this.pairing && Date.now() < this.pairing.expiresAt) {
 				this.updateStatus(
 					InstanceStatus.Connecting,
@@ -178,6 +182,7 @@ export class NotesListInstance extends InstanceBase<ModuleConfig, ModuleSecrets>
 				code: start.code,
 				pollSecret: start.pollSecret,
 				expiresAt: Number.isFinite(expiresAt) ? expiresAt : Date.now() + PAIR_TTL_MS,
+				baseUrl: this.config.baseUrl,
 			}
 			this.updateStatus(
 				InstanceStatus.Connecting,
