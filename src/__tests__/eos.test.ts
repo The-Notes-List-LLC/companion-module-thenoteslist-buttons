@@ -95,8 +95,8 @@ describe('EosReader', () => {
 		handlers.onPacket(count(4))
 		// Index 2 arrives early (e.g. a window read), before the walk reaches it.
 		handlers.onPacket(cue('30', 2))
-		// One request per 22 ms: three reads go out (at 0, 22, 44 ms), none for index 2.
-		await vi.advanceTimersByTimeAsync(50)
+		// The walk sends one request per 150 ms: three reads go out (at 0, 150, 300 ms), none for index 2.
+		await vi.advanceTimersByTimeAsync(350)
 		expect(indexReads()).toEqual([0, 1, 3])
 		for (const [n, i] of [
 			['10', 0],

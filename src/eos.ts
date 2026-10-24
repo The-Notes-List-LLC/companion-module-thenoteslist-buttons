@@ -49,7 +49,10 @@ export type EosSocketFactory = (host: string, port: number, useSlip: boolean, ha
 const PORT_OSC10 = 3032
 const PORT_SLIP = 3037
 const WINDOW = 8 // cues either side of the live cue kept warm
-const REQUEST_GAP_MS = 22 // one request per 22 ms (~45/s); still no burst for the desk
+const REQUEST_GAP_MS = 22 // window reads: one request per 22 ms (~45/s); still no burst for the desk
+// The full-list walk reruns on every insert/delete while the programmer records; at the
+// window rate that is ~12 s of solid traffic each time and lags the desk. Walk gently.
+const BACKGROUND_GAP_MS = 150
 const RECONNECT_MIN_MS = 5000
 const RECONNECT_MAX_MS = 60000 // back off while the desk stays unreachable
 const CONNECT_TIMEOUT_MS = 5000 // give up on a connect attempt instead of waiting for the OS timeout
@@ -94,6 +97,8 @@ export class EosReader implements CueSheet {
 	private wantedByNumber: Set<string> = new Set()
 	private announcedCount = false
 	private drainTimer: NodeJS.Timeout | null = null
+	/** The pending drain is the walk's long gap, which a window read may cut short. */
+	private drainGapIsBackground = false
 	private pingTimer: NodeJS.Timeout | null = null
 	private lastRx = 0
 	/** Why this end closed the socket, logged in place of the plain "connection closed". */
@@ -324,14 +329,22 @@ export class EosReader implements CueSheet {
 		if (this.queued.has(address)) return
 		this.queued.add(address)
 		this.queue.push(address)
+		if (this.drainTimer && this.drainGapIsBackground) {
+			// A window read does not wait out the walk's long gap.
+			clearTimeout(this.drainTimer)
+			this.drainTimer = setTimeout(() => this.drain(), REQUEST_GAP_MS)
+			this.drainGapIsBackground = false
+		}
 		if (!this.drainTimer) this.drain()
 	}
 
 	private drain(): void {
 		// Window reads first; the background walk only uses idle slots.
 		let address: string | undefined
+		let fromBackground = false
 		do {
 			address = this.queue.shift()
+			fromBackground = address === undefined
 			if (address !== undefined) this.queued.delete(address)
 			else {
 				do {
@@ -352,7 +365,8 @@ export class EosReader implements CueSheet {
 		} catch (e) {
 			this.ev.log('debug', `Eos send failed: ${(e as Error).message}`)
 		}
-		this.drainTimer = setTimeout(() => this.drain(), REQUEST_GAP_MS)
+		this.drainGapIsBackground = fromBackground
+		this.drainTimer = setTimeout(() => this.drain(), fromBackground ? BACKGROUND_GAP_MS : REQUEST_GAP_MS)
 	}
 
 	private isCachedRead(address: string): boolean {
@@ -423,7 +437,7 @@ export class EosReader implements CueSheet {
 				this.announcedCount = true
 				this.ev.log(
 					'info',
-					`Eos: cue list ${this.cueList} has ${this.count} cues; walking the list in the background (${Math.round((this.count * REQUEST_GAP_MS) / 1000)} s)`,
+					`Eos: cue list ${this.cueList} has ${this.count} cues; walking the list in the background (${Math.round((this.count * BACKGROUND_GAP_MS) / 1000)} s)`,
 				)
 			} else if (previous !== this.count) {
 				// Insert/delete: every index after the edit moved. Re-walk the whole list.
