@@ -1,4 +1,4 @@
-// Value: protects=the reader's read-only completeness signal and base-label snapshot that the cue-label sender trusts (#1162); fails_when=isComplete() reports true while a desk edit's re-fetch is outstanding or before the walk ends, or baseLabels() includes parts, empty labels or by-number-only labels; why_new=isComplete/baseLabels/cacheEpoch are new; seam=EosReader against a scripted socket (same as eos.test.ts), vitest fake timers; no_claim=what the sender does with these values (labels.test.ts) or a real desk's timing.
+// Value: protects=the reader's read-only completeness signal and base-label snapshot that the cue-label sender trusts (#1162); fails_when=isComplete() reports true while a desk edit's re-fetch is outstanding or before the walk ends, or baseLabels() lets a part override its cue's label, drops a blank cue whose part is labelled (show 10-26), or includes empty or by-number-only labels; why_new=isComplete/baseLabels/cacheEpoch are new; seam=EosReader against a scripted socket (same as eos.test.ts), vitest fake timers; no_claim=what the sender does with these values (labels.test.ts) or a real desk's timing.
 // Test-only file (excluded from the build by tsconfig.build.json); vitest is a dev dependency.
 // eslint-disable-next-line n/no-unpublished-import
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -69,7 +69,7 @@ describe('EosReader: completeness and base labels', () => {
 		r.stop()
 	})
 
-	it('baseLabels: base cues with a label only (no parts, no empty labels, no by-number replies)', async () => {
+	it('baseLabels: labelled cues only (a part never overrides its cue, no empty labels, no by-number replies)', async () => {
 		const r = reader()
 		await walked(r)
 		handlers.onPacket(cue('99', -1, 'not placed')) // a by-number reply: label only, no index
@@ -115,6 +115,43 @@ describe('EosReader: completeness and base labels', () => {
 		handlers.onPacket(cue('1', -1, 'Preset'))
 		handlers.onPacket(count(4))
 		expect(r.isComplete()).toBe(true)
+		r.stop()
+	})
+
+	// A label typed on a part (`Cue 302 Part 1 Label …`) leaves part 0 blank: Eos 3.3.10, checked on a desk.
+	it("baseLabels: a blank cue takes its lowest labelled part; the cue's own label still wins", async () => {
+		const r = reader()
+		r.start()
+		handlers.onConnect()
+		await vi.advanceTimersByTimeAsync(100)
+		handlers.onPacket(count(7))
+		handlers.onPacket(cue('1', 0, 'Own'))
+		handlers.onPacket(cue('1', 1, 'part one', 1))
+		handlers.onPacket(cue('2', 2, ''))
+		handlers.onPacket(cue('2', 3, '', 1))
+		handlers.onPacket(cue('2', 4, 'X UP', 2))
+		handlers.onPacket(cue('2', 5, 'later part', 3))
+		handlers.onPacket(cue('3', 6, ''))
+		await vi.advanceTimersByTimeAsync(500)
+		expect([...r.baseLabels()]).toEqual([
+			['1', 'Own'],
+			['2', 'X UP'],
+		])
+		expect(r.labelOf('2')).toBe('X UP')
+		expect(r.labelOf('1')).toBe('Own')
+		r.stop()
+	})
+
+	it('a desk edit that moves the label onto a part keeps the cue labelled', async () => {
+		const r = reader()
+		await walked(r)
+		handlers.onPacket(msg('/eos/out/notify/cue/1', 7, 2))
+		await vi.advanceTimersByTimeAsync(100)
+		handlers.onPacket(cue('2', -1, ''))
+		handlers.onPacket(cue('2', -1, 'X UP EXPLODE WORLD', 1))
+		handlers.onPacket(count(4))
+		expect(r.isComplete()).toBe(true)
+		expect(r.baseLabels().get('2')).toBe('X UP EXPLODE WORLD')
 		r.stop()
 	})
 
