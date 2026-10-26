@@ -197,7 +197,14 @@ export class LabelSender {
 			this.failures = 0
 			this.lastSent = snapshot
 			if (body.mode === 'replace') this.deps.log('info', `Cue labels: sent ${snapshot.size} to The Notes List`)
-			else this.deps.log('info', `Cue labels: updated ${describeCues(body.cues)} on The Notes List`)
+			else {
+				// A removal (cleared label or deleted cue) says so; "updated" for it reads as a lost rename.
+				const updated = body.cues.filter((c) => c.label !== '')
+				const removed = body.cues.filter((c) => c.label === '')
+				if (updated.length > 0) this.deps.log('info', `Cue labels: updated ${describeCues(updated)} on The Notes List`)
+				if (removed.length > 0)
+					this.deps.log('info', `Cue labels: removed ${describeCues(removed)} from The Notes List`)
+			}
 			this.setStatus(`ok ${snapshot.size}`)
 			if (this.dirty) this.onCacheChange()
 			return
@@ -257,7 +264,7 @@ export class LabelSender {
 	}
 }
 
-/** "cue 12" / "3 cues (12, 12.5, 14)" / "8 cues (1, 2, 3 …)", for the upsert log line. */
+/** "cue 12" / "3 cues (12, 12.5, 14)" / "8 cues (1, 2, 3 …)", for the upsert log lines. */
 function describeCues(cues: CueLabelsBody['cues']): string {
 	if (cues.length === 1) return `cue ${cues[0].number}`
 	const shown = cues.slice(0, 3).map((c) => c.number)

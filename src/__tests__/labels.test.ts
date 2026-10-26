@@ -139,6 +139,23 @@ describe('LabelSender', () => {
 		await vi.advanceTimersByTimeAsync(2_000)
 		expect(sent[1]).toMatchObject({ mode: 'upsert', cues: [{ number: '2', label: '' }] })
 		expect(status()).toBe('ok 1')
+		// A removal says so: on 10-26 "updated" for deleted cues read as lost renames.
+		expect(logs.at(-1)).toBe('info Cue labels: removed cue 2 from The Notes List')
+	})
+
+	it('one upsert with both changes and removals logs each', async () => {
+		sender.configure(true)
+		await walked({ '1': 'Preset', '2': 'Blackout', '3': 'Fade' })
+		await edit(() => {
+			src.labels.set('1', 'House')
+			src.labels.delete('2')
+			src.labels.delete('3')
+		})
+		await vi.advanceTimersByTimeAsync(2_000)
+		expect(logs.slice(-2)).toEqual([
+			'info Cue labels: updated cue 1 on The Notes List',
+			'info Cue labels: removed 2 cues (2, 3) from The Notes List',
+		])
 	})
 
 	it('unticked: no requests at all, status off', async () => {
