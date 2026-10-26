@@ -155,6 +155,24 @@ describe('EosReader: completeness and base labels', () => {
 		r.stop()
 	})
 
+	it('hasCue: a deleted cue is gone, a cleared label keeps its cue (the sender logs which)', async () => {
+		const r = reader()
+		await walked(r)
+		handlers.onPacket(msg('/eos/out/notify/cue/1', 7, 1))
+		await vi.advanceTimersByTimeAsync(100)
+		handlers.onPacket(cue('1', -1, ''))
+		handlers.onPacket(count(4))
+		expect(r.baseLabels().has('1')).toBe(false)
+		expect(r.hasCue('1')).toBe(true)
+		handlers.onPacket(msg('/eos/out/notify/cue/1', 8, 3))
+		await vi.advanceTimersByTimeAsync(100)
+		handlers.onPacket(count(3)) // no reply for 3: deleted on the desk
+		expect(r.isComplete()).toBe(true)
+		expect(r.hasCue('3')).toBe(false)
+		expect(r.hasCue('2')).toBe(true)
+		r.stop()
+	})
+
 	it('a cache clear (reconnect or count change) changes the epoch and is incomplete', async () => {
 		const r = reader()
 		await walked(r)

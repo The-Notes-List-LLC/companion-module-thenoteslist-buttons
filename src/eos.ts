@@ -201,6 +201,11 @@ export class EosReader implements CueSheet {
 		return this.byIndex.get(index)
 	}
 
+	/** The cue is in the cache, labelled or not. */
+	hasCue(number: string): boolean {
+		return this.baseByNumber.has(number)
+	}
+
 	/** Sheet index of a cached base cue (part 0), if any. */
 	indexOf(number: string): number | undefined {
 		return this.baseByNumber.get(number)?.index

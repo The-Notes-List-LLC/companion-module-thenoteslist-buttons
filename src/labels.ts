@@ -13,6 +13,8 @@
 export interface LabelSource {
 	isComplete(): boolean
 	baseLabels(): Map<string, string>
+	/** The cue is still in the cached list (labelled or not): a removal with no cue is a deletion. */
+	hasCue(number: string): boolean
 	listNumber(): number
 	cacheEpoch(): number
 }
@@ -168,13 +170,22 @@ export class LabelSender {
 			return
 		}
 		const cues: CueLabelsBody['cues'] = []
+		const deleted = new Set<string>()
 		for (const [number, label] of now) if (this.lastSent.get(number) !== label) cues.push({ number, label })
-		for (const number of this.lastSent.keys()) if (!now.has(number)) cues.push({ number, label: '' })
+		for (const number of this.lastSent.keys()) {
+			if (now.has(number)) continue
+			cues.push({ number, label: '' })
+			if (!src.hasCue(number)) deleted.add(number)
+		}
 		if (cues.length === 0) return
-		void this.post({ mode: 'upsert', cueList, cues }, now)
+		void this.post({ mode: 'upsert', cueList, cues }, now, deleted)
 	}
 
-	private async post(body: CueLabelsBody, snapshot: Map<string, string>): Promise<void> {
+	private async post(
+		body: CueLabelsBody,
+		snapshot: Map<string, string>,
+		deleted: Set<string> = new Set(),
+	): Promise<void> {
 		const gen = this.generation
 		this.inFlight = true
 		this.dirty = false
@@ -198,12 +209,22 @@ export class LabelSender {
 			this.lastSent = snapshot
 			if (body.mode === 'replace') this.deps.log('info', `Cue labels: sent ${snapshot.size} to The Notes List`)
 			else {
-				// A removal (cleared label or deleted cue) says so; "updated" for it reads as a lost rename.
+				// A removal says so, and why; "updated" for it reads as a lost rename.
 				const updated = body.cues.filter((c) => c.label !== '')
 				const removed = body.cues.filter((c) => c.label === '')
+				const gone = removed.filter((c) => deleted.has(c.number))
+				const cleared = removed.filter((c) => !deleted.has(c.number))
 				if (updated.length > 0) this.deps.log('info', `Cue labels: updated ${describeCues(updated)} on The Notes List`)
-				if (removed.length > 0)
-					this.deps.log('info', `Cue labels: removed ${describeCues(removed)} from The Notes List`)
+				if (gone.length > 0)
+					this.deps.log(
+						'info',
+						`Cue labels: removed ${describeCues(gone)} from The Notes List (${gone.length === 1 ? 'cue' : 'cues'} deleted)`,
+					)
+				if (cleared.length > 0)
+					this.deps.log(
+						'info',
+						`Cue labels: removed ${describeCues(cleared)} from The Notes List (${cleared.length === 1 ? 'label' : 'labels'} cleared)`,
+					)
 			}
 			this.setStatus(`ok ${snapshot.size}`)
 			if (this.dirty) this.onCacheChange()
