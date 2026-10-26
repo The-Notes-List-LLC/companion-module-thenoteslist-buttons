@@ -105,6 +105,7 @@ describe('EosReader', () => {
 		sent = []
 		await vi.advanceTimersByTimeAsync(5100)
 		expect(logs.some((l) => l.startsWith('warn') && l.includes('running unfiltered'))).toBe(true)
+		expect(logs.some((l) => l.includes('accepted the OSC output filter'))).toBe(false)
 		expect(sent.filter((a) => a !== '/eos/ping')).toEqual(['/eos/filter/clear', '/eos/get/cue/1/count'])
 		r.stop()
 	})
@@ -115,6 +116,7 @@ describe('EosReader', () => {
 		handlers.onPacket(count(0))
 		await vi.advanceTimersByTimeAsync(6000)
 		expect(logs.some((l) => l.includes('running unfiltered'))).toBe(false)
+		expect(logs.filter((l) => l === 'info Eos: the desk accepted the OSC output filter')).toHaveLength(1)
 		r.stop()
 	})
 

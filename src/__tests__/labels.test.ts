@@ -117,7 +117,19 @@ describe('LabelSender', () => {
 		expect(sent[1]).toMatchObject({ mode: 'upsert', cues: [{ number: '2', label: 'Fade out' }] })
 		await vi.advanceTimersByTimeAsync(10_000)
 		expect(sent).toHaveLength(2)
-		expect(logs).toHaveLength(1) // no per-upsert log
+		// One line per send, so the desk-to-site time can be read off the log.
+		expect(logs).toEqual([
+			'info Cue labels: sent 2 to The Notes List',
+			'info Cue labels: updated cue 2 on The Notes List',
+		])
+	})
+
+	it('names at most three cues when one upsert carries several', async () => {
+		sender.configure(true)
+		await walked({ '1': 'A', '2': 'B', '3': 'C', '4': 'D' })
+		await edit(() => ['1', '2', '3', '4'].forEach((n) => src.labels.set(n, `${n}!`)))
+		await vi.advanceTimersByTimeAsync(2_000)
+		expect(logs.at(-1)).toBe('info Cue labels: updated 4 cues (1, 2, 3 …) on The Notes List')
 	})
 
 	it('a removed cue or cleared label goes as ""', async () => {

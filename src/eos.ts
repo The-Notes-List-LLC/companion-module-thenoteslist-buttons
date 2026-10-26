@@ -673,6 +673,12 @@ export class EosReader implements CueSheet {
 				return
 			}
 			this.gotCount = true
+			if (this.filterTimer) {
+				// The first count came back through the filter: the desk accepted it.
+				clearTimeout(this.filterTimer)
+				this.filterTimer = null
+				this.ev.log('info', 'Eos: the desk accepted the OSC output filter')
+			}
 			const wait = this.countWaits.shift() ?? noWait()
 			const previous = this.count
 			this.count = n
