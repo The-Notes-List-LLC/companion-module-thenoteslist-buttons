@@ -1,6 +1,6 @@
 {
 	"name": "companion-module-thenoteslist-thenoteslist",
-	"version": "1.2.2",
+	"version": "1.2.5",
 	"description": "Bitfocus Companion module for The Notes List: open the note editor with the live cue prefilled, step through and set the status of notes, and show outstanding counts from any Companion surface.",
 	"main": "dist/main.js",
 	"type": "module",

@@ -181,14 +181,29 @@ export class EosReader implements CueSheet {
 		this.connected = false
 	}
 
-	/** Label of a base cue: from the indexed cache, else from a by-number reply. */
+	/** Label of a base cue: from the indexed cache (see baseLabels for parts), else from a by-number reply. */
 	labelOf(number: string): string {
-		return this.baseByNumber.get(number)?.label ?? this.labels.get(number) ?? ''
+		const base = this.baseByNumber.get(number)
+		if (!base) return this.labels.get(number) ?? ''
+		return base.label || this.partLabel(number)
+	}
+
+	/** The label of a cue's lowest-numbered labelled part, or "". */
+	private partLabel(number: string): string {
+		let best: EosCue | undefined
+		for (const c of this.byIndex.values())
+			if (c.number === number && c.part > 0 && c.label !== '' && (!best || c.part < best.part)) best = c
+		return best?.label ?? ''
 	}
 
 	/** The cached record at a sheet index, if any. */
 	at(index: number): EosCue | undefined {
 		return this.byIndex.get(index)
+	}
+
+	/** The cue is in the cache, labelled or not. */
+	hasCue(number: string): boolean {
+		return this.baseByNumber.has(number)
 	}
 
 	/** Sheet index of a cached base cue (part 0), if any. */
@@ -220,10 +235,20 @@ export class EosReader implements CueSheet {
 		return !this.queue.some(pending) && !this.background.some(pending)
 	}
 
-	/** Number → label of every cached base cue (part 0) with a non-empty label, from the indexed records only. */
+	/**
+	 * Number → label of every cached cue with a label, from the indexed records only. A cue
+	 * whose own label (part 0) is blank takes its lowest-numbered labelled part: a label typed
+	 * on a part (`Cue 302 Part 1 Label …`) leaves part 0 blank, and sending "" would delete it.
+	 */
 	baseLabels(): Map<string, string> {
 		const out = new Map<string, string>()
-		for (const c of this.byIndex.values()) if (c.part === 0 && c.label !== '') out.set(c.number, c.label)
+		const parts = new Map<string, EosCue>()
+		for (const c of this.byIndex.values()) {
+			if (c.label === '') continue
+			if (c.part === 0) out.set(c.number, c.label)
+			else if (!parts.has(c.number) || c.part < parts.get(c.number)!.part) parts.set(c.number, c)
+		}
+		for (const [number, c] of parts) if (!out.has(number)) out.set(number, c.label)
 		return out
 	}
 

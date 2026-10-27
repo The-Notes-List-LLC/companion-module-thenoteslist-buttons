@@ -8,12 +8,17 @@ import { LabelSender, type CueLabelsBody, type LabelSource, type SendResult } fr
 class FakeSource implements LabelSource {
 	complete = false
 	labels = new Map<string, string>()
+	/** Cues still on the desk with no label (a cleared label, not a deletion). */
+	unlabelled = new Set<string>()
 	epoch = 0
 	isComplete(): boolean {
 		return this.complete
 	}
 	baseLabels(): Map<string, string> {
 		return new Map(this.labels)
+	}
+	hasCue(number: string): boolean {
+		return this.labels.has(number) || this.unlabelled.has(number)
 	}
 	listNumber(): number {
 		return 1
@@ -139,6 +144,38 @@ describe('LabelSender', () => {
 		await vi.advanceTimersByTimeAsync(2_000)
 		expect(sent[1]).toMatchObject({ mode: 'upsert', cues: [{ number: '2', label: '' }] })
 		expect(status()).toBe('ok 1')
+		// A removal says so: on 10-26 "updated" for deleted cues read as lost renames.
+		expect(logs.at(-1)).toBe('info Cue labels: removed cue 2 from The Notes List (cue deleted)')
+	})
+
+	it('a cleared label on a cue still in the list logs "label cleared", not "deleted"', async () => {
+		sender.configure(true)
+		await walked({ '1': 'Preset', '2': 'Blackout' })
+		await edit(() => {
+			src.labels.delete('2')
+			src.unlabelled.add('2')
+		})
+		await vi.advanceTimersByTimeAsync(2_000)
+		expect(sent[1]).toMatchObject({ mode: 'upsert', cues: [{ number: '2', label: '' }] })
+		expect(logs.at(-1)).toBe('info Cue labels: removed cue 2 from The Notes List (label cleared)')
+	})
+
+	it('one upsert with both changes and removals logs each', async () => {
+		sender.configure(true)
+		await walked({ '1': 'Preset', '2': 'Blackout', '3': 'Fade', '4': 'Out' })
+		await edit(() => {
+			src.labels.set('1', 'House')
+			src.labels.delete('2')
+			src.labels.delete('3')
+			src.labels.delete('4')
+			src.unlabelled.add('4')
+		})
+		await vi.advanceTimersByTimeAsync(2_000)
+		expect(logs.slice(-3)).toEqual([
+			'info Cue labels: updated cue 1 on The Notes List',
+			'info Cue labels: removed 2 cues (2, 3) from The Notes List (cues deleted)',
+			'info Cue labels: removed cue 4 from The Notes List (label cleared)',
+		])
 	})
 
 	it('unticked: no requests at all, status off', async () => {
